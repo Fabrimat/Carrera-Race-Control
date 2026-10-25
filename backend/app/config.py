@@ -39,6 +39,13 @@ class AppConfig(BaseSettings):
     anthropic_model: str = "claude-haiku-5-5"
     # Vision model that turns a photo of the track into a map (POST /api/layouts/from-photo).
     anthropic_vision_model: str = "claude-opus-5-5"
+    openai_api_key: SecretStr | None = None
+    # Defaults are model ids listed by the installed openai SDK (ChatModel): a small, low
+    # latency one for commentary and the full model for reading a photo. Overridable.
+    openai_model: str = "gpt-5.4-mini"
+    openai_vision_model: str = "gpt-5.4"
+    # Reasoning effort of the photo-to-map call (the commentary call always uses "none").
+    openai_vision_reasoning: Literal["none", "minimal", "low", "medium", "high"] = "low"
 
     track_mode: TrackMode = "simulator"
     track_address: str | None = None
@@ -96,3 +103,6 @@ class AppConfig(BaseSettings):
 
     def has_anthropic_key(self) -> bool:
         return bool(self.anthropic_api_key and self.anthropic_api_key.get_secret_value())
+
+    def has_openai_key(self) -> bool:
+        return bool(self.openai_api_key and self.openai_api_key.get_secret_value())

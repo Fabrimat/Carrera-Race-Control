@@ -16,13 +16,14 @@ export function settingsResponse(over: Partial<SettingsResponse> = {}): Settings
       verbosity: 'normal',
       tts_enabled: false,
       llm_enabled: false,
+      llm_provider: 'anthropic',
       audio_output: 'browser',
       session_char_budget: 1000,
       monthly_char_budget: 10000,
     },
     track: { mode: 'simulator', address: null, layout: 'Default' },
     race: emptyRace.config,
-    keys: { elevenlabs: false, anthropic: false },
+    keys: { elevenlabs: false, anthropic: false, openai: false },
     ...over,
   }
 }

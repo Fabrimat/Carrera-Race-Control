@@ -2,8 +2,16 @@ import asyncio
 import json
 from types import SimpleNamespace
 
+import pytest
+
 from app.commentary.events import Candidate
-from app.commentary.llm import AnthropicWriter, LineWriter, TemplateWriter, build_system_prompt
+from app.commentary.llm import (
+    AnthropicWriter,
+    LineWriter,
+    OpenAIWriter,
+    TemplateWriter,
+    build_system_prompt,
+)
 from app.race.models import CommentaryPriority
 
 
@@ -231,3 +239,163 @@ async def test_auth_error_disables_the_writer_for_the_session():
     clock.advance(10_000)
     assert not writer.available
     assert await writer.write_line(cand(), {}) == "template text" and len(calls) == 1
+
+
+# --------------------------------------------------------------------------- OpenAIWriter
+
+
+def out_text(text):
+    block = SimpleNamespace(type="output_text", text=text)
+    message = SimpleNamespace(type="message", content=[block])
+    return SimpleNamespace(output=[SimpleNamespace(type="reasoning"), message])
+
+
+class FakeResponses:
+    def __init__(self, behaviour):
+        self.behaviour = behaviour
+        self.kwargs = None
+
+    async def create(self, **kwargs):
+        self.kwargs = kwargs
+        return await self.behaviour()
+
+
+def openai_writer(behaviour, **kw):
+    responses = FakeResponses(behaviour)
+    client = SimpleNamespace(responses=responses)
+    return OpenAIWriter("key-not-used", client=client, **kw), responses
+
+
+async def test_openai_text_used_with_the_same_prompt_and_context():
+    async def ok():
+        return out_text("  Great lap, Rosso!  ")
+
+    writer, responses = openai_writer(ok)
+    assert await writer.write_line(cand("en"), {"leader_lap": 4}) == "Great lap, Rosso!"
+    kwargs = responses.kwargs
+    assert kwargs["instructions"] == build_system_prompt("en")
+    payload = json.loads(kwargs["input"])
+    assert payload["event"]["lap_time"] == "seven point three four seconds"
+    assert payload["race"]["leader_lap"] == 4
+    assert kwargs["model"] == "gpt-5.4-mini"
+    assert kwargs["reasoning"] == {"effort": "none"}
+    assert kwargs["max_output_tokens"] == 300
+    assert kwargs["store"] is False
+
+
+async def test_openai_text_only_from_output_text_blocks():
+    async def mixed():
+        return SimpleNamespace(
+            output=[
+                SimpleNamespace(
+                    type="reasoning", content=[SimpleNamespace(type="output_text", text="no")]
+                ),
+                SimpleNamespace(
+                    type="message",
+                    content=[
+                        SimpleNamespace(type="output_text", text="Che giro, "),
+                        SimpleNamespace(type="refusal", refusal="x"),
+                        SimpleNamespace(type="output_text", text="Rosso!"),
+                    ],
+                ),
+            ]
+        )
+
+    writer, _ = openai_writer(mixed)
+    assert await writer.write_line(cand(), {}) == "Che giro, Rosso!"
+
+
+async def test_openai_empty_overlong_error_and_timeout_fall_back():
+    async def empty():
+        return SimpleNamespace(output=[])
+
+    async def long():
+        return out_text("word " * 30)
+
+    async def slow():
+        await asyncio.sleep(1)
+
+    async def boom():
+        raise RuntimeError("down")
+
+    for behaviour in (empty, long):
+        writer, _ = openai_writer(behaviour)
+        assert await writer.write_line(cand(), {}) == "template text"
+    writer, _ = openai_writer(slow, timeout_s=0.05)
+    assert await writer.write_line(cand(), {}) == "template text"
+    assert writer.available  # a timeout is not an API error
+    writer, _ = openai_writer(boom)
+    assert await writer.write_line(cand(), {}) == "template text"
+    assert not writer.available
+
+
+def failing_openai_writer(status):
+    from tests.test_commentary_fakes import FakeClock
+
+    calls = []
+    clock = FakeClock(1000.0)
+    state = {"fail": True}
+
+    async def create(**kwargs):
+        calls.append(kwargs)
+        if state["fail"]:
+            raise ApiError(status)
+        return out_text("ok")
+
+    client = SimpleNamespace(responses=SimpleNamespace(create=create))
+    return OpenAIWriter("k", client=client, clock=clock), calls, clock, state
+
+
+async def test_openai_rate_limit_backs_off_45s_then_recovers():
+    writer, calls, clock, state = failing_openai_writer(429)
+    assert await writer.write_line(cand(), {}) == "template text"
+    assert not writer.available and len(calls) == 1
+    clock.advance(44)
+    assert await writer.write_line(cand(), {}) == "template text"
+    assert len(calls) == 1
+    clock.advance(1.5)
+    state["fail"] = False
+    assert await writer.write_line(cand(), {}) == "ok" and len(calls) == 2
+
+
+async def test_openai_generic_error_backs_off_15s():
+    writer, calls, clock, _ = failing_openai_writer(500)
+    await writer.write_line(cand(), {})
+    clock.advance(14)
+    assert not writer.available
+    clock.advance(1.5)
+    assert writer.available and len(calls) == 1
+
+
+async def test_openai_connection_error_backs_off_15s():
+    writer, _, clock, _ = failing_openai_writer(None)  # no status_code: a connection error
+    await writer.write_line(cand(), {})
+    assert not writer.available
+    clock.advance(15.5)
+    assert writer.available
+
+
+@pytest.mark.parametrize("status", [401, 403])
+async def test_openai_auth_error_disables_the_writer_for_the_session(status):
+    writer, calls, clock, _ = failing_openai_writer(status)
+    await writer.write_line(cand(), {})
+    clock.advance(10_000)
+    assert not writer.available
+    assert await writer.write_line(cand(), {}) == "template text" and len(calls) == 1
+
+
+async def test_openai_incomplete_response_falls_back_and_warns_once(caplog):
+    async def incomplete():
+        return SimpleNamespace(
+            status="incomplete",
+            incomplete_details=SimpleNamespace(reason="max_output_tokens"),
+            output=[SimpleNamespace(type="reasoning")],
+        )
+
+    writer, _ = openai_writer(incomplete)
+    with caplog.at_level("WARNING"):
+        assert await writer.write_line(cand(), {}) == "template text"
+        assert await writer.write_line(cand(), {}) == "template text"
+    warnings = [r for r in caplog.records if "incomplete" in r.getMessage()]
+    assert len(warnings) == 1 and "max_output_tokens" in warnings[0].getMessage()
+    assert writer.available  # not an API error: no backoff

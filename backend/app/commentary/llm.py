@@ -1,7 +1,7 @@
 """Line writers: turn a commentary candidate into the final spoken text.
 
-`TemplateWriter` returns the template text. `AnthropicWriter` asks an LLM to write the
-line from the live race situation, in the configured language, and falls back to the
+`TemplateWriter` returns the template text. `AnthropicWriter` and `OpenAIWriter` ask an LLM
+to write the line from the live race situation, in the configured language, and falls back to the
 template text on any failure (timeout, error, empty or thinking-only answer). The
 director uses it for every priority when `llm_enabled` is on.
 """
@@ -21,6 +21,7 @@ from app.commentary.events import DEFAULT_LANGUAGE, Candidate
 log = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "claude-haiku-5-5"
+DEFAULT_OPENAI_MODEL = "gpt-5.4-mini"
 RATE_LIMIT_BACKOFF_S = 45.0
 ERROR_BACKOFF_S = 15.0
 MAX_WORDS = 26  # hard cap on the LLM line; longer text falls back to the template
@@ -177,3 +178,109 @@ class AnthropicWriter:
         except Exception as exc:  # noqa: BLE001 - never let the LLM break commentary
             self._handle_error(exc)
             return candidate.text
+
+
+class OpenAIWriter:
+    """Same behaviour as :class:`AnthropicWriter`, through the OpenAI Responses API."""
+
+    def __init__(
+        self,
+        api_key: str,
+        model: str = DEFAULT_OPENAI_MODEL,
+        timeout_s: float = 2.5,
+        client: Any | None = None,
+        max_output_tokens: int = 300,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self.model = model
+        self.timeout_s = timeout_s
+        # Reasoning models count their reasoning tokens in this budget too.
+        self.max_output_tokens = max_output_tokens
+        self._clock = clock
+        self._backoff_until = 0.0
+        self._disabled = False
+        self._logged: set[str] = set()
+        if client is not None:
+            self._client = client
+        else:
+            from openai import AsyncOpenAI
+
+            self._client = AsyncOpenAI(api_key=api_key, timeout=timeout_s, max_retries=0)
+
+    @property
+    def available(self) -> bool:
+        """False while backing off after an API error or once the key was rejected."""
+        return not self._disabled and self._clock() >= self._backoff_until
+
+    def _log_once(self, key: str, message: str, *args: Any) -> None:
+        if key not in self._logged:
+            self._logged.add(key)
+            log.warning(message, *args)
+
+    def _handle_error(self, exc: Exception) -> None:
+        status = getattr(exc, "status_code", None)
+        if status in (401, 403):
+            self._disabled = True
+            self._log_once("auth", "OpenAI rejected the API key (HTTP %s), LLM off", status)
+        elif status == 429:
+            self._backoff_until = self._clock() + RATE_LIMIT_BACKOFF_S
+            self._log_once("429", "OpenAI rate limit (429), using templates for a while")
+        else:
+            self._backoff_until = self._clock() + ERROR_BACKOFF_S
+            self._log_once(
+                f"err:{type(exc).__name__}",
+                "OpenAI error (%s), using templates for a while",
+                type(exc).__name__,
+            )
+
+    async def write_line(self, candidate: Candidate, context: dict[str, Any]) -> str:
+        if not self.available:
+            return candidate.text
+        try:
+            response = await asyncio.wait_for(
+                self._client.responses.create(
+                    model=self.model,
+                    instructions=build_system_prompt(candidate.language),
+                    input=build_user_message(candidate, context),
+                    max_output_tokens=self.max_output_tokens,
+                    # No reasoning: it would eat the output budget and add latency.
+                    reasoning={"effort": "none"},
+                    store=False,
+                ),
+                timeout=self.timeout_s,
+            )
+            text = response_text(response)
+            text = text.strip().strip("\"'«»“”").strip()
+            if not text:
+                if getattr(response, "status", None) == "incomplete":
+                    details = getattr(response, "incomplete_details", None)
+                    self._log_once(
+                        "incomplete",
+                        "OpenAI response incomplete (%s), using template text",
+                        getattr(details, "reason", None) or "unknown reason",
+                    )
+                return candidate.text
+            if len(text.split()) > MAX_WORDS:
+                log.debug("LLM line too long (%d words), using template", len(text.split()))
+                return candidate.text
+            return text
+        except asyncio.CancelledError:
+            raise
+        except TimeoutError:
+            self._log_once("timeout", "OpenAI call timed out, using template text")
+            return candidate.text
+        except Exception as exc:  # noqa: BLE001 - never let the LLM break commentary
+            self._handle_error(exc)
+            return candidate.text
+
+
+def response_text(response: Any) -> str:
+    """The visible text of a Responses API reply (output_text blocks; reasoning is skipped)."""
+    parts: list[str] = []
+    for item in getattr(response, "output", None) or []:
+        if getattr(item, "type", None) != "message":
+            continue
+        for block in getattr(item, "content", None) or []:
+            if getattr(block, "type", None) == "output_text":
+                parts.append(getattr(block, "text", "") or "")
+    return "".join(parts)

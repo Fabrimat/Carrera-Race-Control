@@ -311,6 +311,7 @@ class CommentarySettings(BaseModel):
     verbosity: Verbosity = Verbosity.NORMAL
     tts_enabled: bool = True
     llm_enabled: bool = False
+    llm_provider: Literal["anthropic", "openai"] = "anthropic"
     audio_output: Literal["browser", "local"] = "browser"
     session_char_budget: int = Field(default=20_000, ge=0)
     monthly_char_budget: int = Field(default=100_000, ge=0)

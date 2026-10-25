@@ -57,7 +57,7 @@ Snapshot = {
   muted: boolean,
 }
 SettingsResponse = Settings & {
-  keys: { elevenlabs: boolean, anthropic: boolean },  // configured or not; never the values
+  keys: { elevenlabs: boolean, anthropic: boolean, openai: boolean },  // configured or not; never the values
 }
 RaceSummary = {
   id: number, started_at: string, finished_at: string | null,
@@ -87,7 +87,7 @@ RaceDetail = Omit<RaceSummary, "laps"> & {   // `laps` is the lap list here, not
 | `record_not_found` | 404 | `DELETE /api/records/{layout}` for a layout without a record |
 | `audio_not_found` | 404 | no audio for that commentary line |
 | `layout_not_found` | 404 | unknown layout name (`GET` / `DELETE /api/layouts/{name}`) |
-| `llm_unavailable` | 503 | `POST /api/layouts/from-photo`: no Anthropic key, the key / vision model was rejected (HTTP 401, 403, 404), or Anthropic is unreachable, slow (45 s timeout), throttling (429) or failing (5xx): not the photo's fault, try again later |
+| `llm_unavailable` | 503 | `POST /api/layouts/from-photo`: no key for the selected provider, the key / vision model was rejected (HTTP 401, 403, 404), or the provider is unreachable, slow (45 s timeout), throttling (429) or failing (5xx): not the photo's fault, try again later |
 | `photo_unrecognised` | 422 | `from-photo`: no closed track found, unusable or too coarse reply, or the API rejected the request (other 4xx) |
 | `photo_busy` | 429 | `from-photo`: another photo conversion is already running (one at a time); retry shortly |
 | `image_too_large` | 413 | `from-photo`: image larger than 8 MB (decoded) |
@@ -112,7 +112,10 @@ User-facing text exists in English (`en`) and Italian (`it`). The backend never
 sends UI strings: it sends codes (`error_code`, event `type`, enums) and the
 frontend translates them with its own dictionaries (`frontend/src/i18n/`).
 `Settings.ui_language` selects the UI language; `Settings.commentary.language`
-selects the commentator's language independently. REST `detail` messages are
+selects the commentator's language independently.
+`Settings.commentary.llm_provider` (`"anthropic"` default, or `"openai"`) selects which LLM
+writes the commentary lines and reads track photos; a fresh settings database picks the
+provider whose key exists, preferring Anthropic. REST `detail` messages are
 English and meant for logs; the UI shows a translated message keyed on HTTP
 status / known codes, falling back to `detail`. Commentary text is produced
 in the selected language by the backend (`templates_en.py`, `templates_it.py`).
@@ -179,8 +182,13 @@ crossing (`total_time_ms`) and the next declared sensor, or a full lap.
 | DELETE | `/api/layouts/{name}` | – | `{"layouts": TrackLayout[]}` (404 `layout_not_found`) |
 | POST | `/api/layouts/from-photo` | `{"image_base64": str, "media_type": "image/jpeg"\|"image/png"\|"image/webp", "name": str, "language": "en"\|"it"}` | `LayoutDraft` (not saved) |
 
-`from-photo` sends the image to the Anthropic API (vision model, `ANTHROPIC_VISION_MODEL`),
-which returns the centre line in driving order. Errors: `llm_unavailable` (no key or
+`from-photo` sends the image to the selected AI provider (`Settings.commentary.llm_provider`;
+Anthropic with `ANTHROPIC_VISION_MODEL`, or OpenAI with `OPENAI_VISION_MODEL` when its key is
+configured; if OpenAI is selected without its key, Anthropic is used when its key exists and
+the draft `notes` say so, otherwise `llm_unavailable` names OpenAI),
+which returns the centre line in driving order. Providers may retain API inputs for a limited
+period for abuse monitoring (OpenAI about 30 days, unless zero data retention applies); the UI
+notice says so. Errors: `llm_unavailable` (no key or
 disabled), `image_too_large` (> 8 MB decoded), `invalid_image`, `photo_unrecognised`
-(no closed track found). The UI warns that the photo is sent to Anthropic and always
+(no closed track found). The UI warns that the photo is sent to the AI provider and always
 opens the draft in the editor for correction before saving.

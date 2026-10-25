@@ -39,6 +39,7 @@ class PhotoRequest(BaseModel):
 class Keys(BaseModel):
     elevenlabs: bool
     anthropic: bool
+    openai: bool
 
 
 class SettingsResponse(Settings):
@@ -55,6 +56,7 @@ def _settings_response(ctl: RaceController) -> SettingsResponse:
         keys=Keys(
             elevenlabs=ctl.config.has_elevenlabs_key(),
             anthropic=ctl.config.has_anthropic_key(),
+            openai=ctl.config.has_openai_key(),
         ),
     )
 

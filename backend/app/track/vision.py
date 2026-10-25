@@ -1,4 +1,4 @@
-"""Photo -> track layout draft, using an Anthropic vision model.
+"""Photo -> track layout draft, using an Anthropic or OpenAI vision model.
 
 The browser sends a (downscaled, re-encoded) photo of the track; the model returns the
 closed centre line as ~40-60 integer points on a 0..1000 grid. We convert it to fractions
@@ -18,6 +18,7 @@ import math
 import struct
 from typing import Any, Literal
 
+from app.commentary.llm import response_text
 from app.race.models import LayoutDraft, TrackLayout
 
 MAX_IMAGE_BYTES = 8 * 1024 * 1024
@@ -30,6 +31,7 @@ MAX_NOTES = 500
 DEFAULT_ASPECT = 1.5
 
 VisionCode = Literal["llm_unavailable", "photo_unrecognised", "image_too_large", "invalid_image"]
+Provider = Literal["anthropic", "openai"]
 MediaType = Literal["image/jpeg", "image/png", "image/webp"]
 
 _LANGUAGE_NAMES = {"en": "English", "it": "Italian"}
@@ -267,26 +269,87 @@ def build_draft(reply: str, *, name: str, aspect: float | None) -> LayoutDraft:
 # --------------------------------------------------------------------------- API call
 
 
-async def _ask(client: Any, model: str, messages: list[dict[str, Any]]) -> Any:
-    """One Messages call. Newer models (Opus) want adaptive thinking with a low effort;
-    older ones (Haiku) want thinking disabled: on a 400 the other form is tried once."""
-    try:
+class AnthropicVision:
+    """Messages API: image block + prompt, returns the reply text."""
+
+    def __init__(self, client: Any) -> None:
+        self._client = client
+
+    async def _ask(self, model: str, messages: list[dict[str, Any]]) -> Any:
+        """One Messages call. Newer models (Opus) want adaptive thinking with a low effort;
+        older ones (Haiku) want thinking disabled: on a 400 the other form is tried once."""
+        client = self._client
+        try:
+            return await client.messages.create(
+                model=model,
+                max_tokens=6000,
+                thinking={"type": "adaptive"},
+                output_config={"effort": "low"},
+                messages=messages,
+            )
+        except Exception as exc:  # noqa: BLE001 - only a 400 about the thinking form is retried
+            if getattr(exc, "status_code", None) != 400 or "thinking" not in str(exc).lower():
+                raise
         return await client.messages.create(
             model=model,
-            max_tokens=6000,
-            thinking={"type": "adaptive"},
-            output_config={"effort": "low"},
+            max_tokens=4000,
+            thinking={"type": "disabled"},
             messages=messages,
         )
-    except Exception as exc:  # noqa: BLE001 - only a 400 about the thinking form is retried
-        if getattr(exc, "status_code", None) != 400 or "thinking" not in str(exc).lower():
-            raise
-    return await client.messages.create(
-        model=model,
-        max_tokens=4000,
-        thinking={"type": "disabled"},
-        messages=messages,
-    )
+
+    async def describe(self, *, model: str, image_base64: str, media_type: str, prompt: str) -> str:
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": media_type,
+                            "data": image_base64,
+                        },
+                    },
+                    {"type": "text", "text": prompt},
+                ],
+            }
+        ]
+        response = await self._ask(model, messages)
+        return "".join(
+            getattr(block, "text", "") or ""
+            for block in getattr(response, "content", [])
+            if getattr(block, "type", None) == "text"
+        )
+
+
+class OpenAIVision:
+    """Responses API: the image goes in as a base64 data URL, returns the reply text."""
+
+    def __init__(self, client: Any, reasoning_effort: str = "low") -> None:
+        self._client = client
+        self._effort = reasoning_effort
+
+    async def describe(self, *, model: str, image_base64: str, media_type: str, prompt: str) -> str:
+        response = await self._client.responses.create(
+            model=model,
+            max_output_tokens=8000,  # reasoning tokens count here too
+            reasoning={"effort": self._effort},
+            store=False,
+            input=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": prompt},
+                        {
+                            "type": "input_image",
+                            "image_url": f"data:{media_type};base64,{image_base64}",
+                            "detail": "high",
+                        },
+                    ],
+                }
+            ],
+        )
+        return response_text(response)
 
 
 async def layout_from_photo(
@@ -297,32 +360,36 @@ async def layout_from_photo(
     name: str,
     language: str,
     client: Any | None = None,
+    provider: Provider = "anthropic",
+    reasoning_effort: str = "low",
     timeout_s: float = TIMEOUT_S,
 ) -> LayoutDraft:
     """Validate the image, ask the vision model for the centre line and build the draft."""
     if client is None and not api_key:
-        raise VisionError(503, "No Anthropic API key configured", "llm_unavailable")
+        label = "OpenAI" if provider == "openai" else "Anthropic"
+        raise VisionError(503, f"No {label} API key configured", "llm_unavailable")
     data, media_type = decode_image(image_base64)
     aspect = image_aspect(data, media_type)
     if client is None:
-        from anthropic import AsyncAnthropic
+        if provider == "openai":
+            from openai import AsyncOpenAI
 
-        client = AsyncAnthropic(api_key=api_key, timeout=timeout_s, max_retries=0)
+            client = AsyncOpenAI(api_key=api_key, timeout=timeout_s, max_retries=0)
+        else:
+            from anthropic import AsyncAnthropic
+
+            client = AsyncAnthropic(api_key=api_key, timeout=timeout_s, max_retries=0)
+    backend = (
+        OpenAIVision(client, reasoning_effort) if provider == "openai" else AnthropicVision(client)
+    )
     prompt = PROMPT.replace("{language}", _LANGUAGE_NAMES.get(language, "English"))
-    messages = [
-        {
-            "role": "user",
-            "content": [
-                {
-                    "type": "image",
-                    "source": {"type": "base64", "media_type": media_type, "data": image_base64},
-                },
-                {"type": "text", "text": prompt},
-            ],
-        }
-    ]
     try:
-        response = await asyncio.wait_for(_ask(client, model, messages), timeout=timeout_s)
+        text = await asyncio.wait_for(
+            backend.describe(
+                model=model, image_base64=image_base64, media_type=media_type, prompt=prompt
+            ),
+            timeout=timeout_s,
+        )
     except asyncio.CancelledError:
         raise
     except TimeoutError as exc:
@@ -341,9 +408,4 @@ async def layout_from_photo(
         if status is None or status == 429 or status >= 500:
             raise VisionError(503, detail, "llm_unavailable") from exc
         raise VisionError(422, detail, "photo_unrecognised") from exc
-    text = "".join(
-        getattr(block, "text", "") or ""
-        for block in getattr(response, "content", [])
-        if getattr(block, "type", None) == "text"
-    )
     return build_draft(text, name=name, aspect=aspect)

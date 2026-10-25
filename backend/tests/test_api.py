@@ -237,7 +237,7 @@ def test_settings_roundtrip_never_leaks_keys(make_client, tmp_path: Path) -> Non
     assert r.status_code == 200
     _assert_no_secrets(r.text)
     body = r.json()
-    assert body["keys"] == {"elevenlabs": True, "anthropic": True}
+    assert body["keys"] == {"elevenlabs": True, "anthropic": True, "openai": False}
     assert body["commentary"]["language"] == "it"
 
     body["cars"][0]["name"] = "Ferrari"
@@ -266,6 +266,7 @@ def test_keys_from_environment_are_not_leaked(
 ) -> None:
     monkeypatch.setenv("ELEVENLABS_API_KEY", SECRET_EL)
     monkeypatch.setenv("ANTHROPIC_API_KEY", SECRET_ANT)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.setenv("DATA_DIR", str(tmp_path / "envdata"))
     monkeypatch.setenv("ALLOWED_HOSTS", "testserver")
     config = AppConfig(_env_file=None)
@@ -274,12 +275,16 @@ def test_keys_from_environment_are_not_leaked(
     client = make_client(config=config)
     r = client.get("/api/settings")
     _assert_no_secrets(r.text)
-    assert r.json()["keys"] == {"elevenlabs": True, "anthropic": True}
+    assert r.json()["keys"] == {"elevenlabs": True, "anthropic": True, "openai": False}
 
 
 def test_missing_keys_reported_false(make_client) -> None:
     client = make_client()
-    assert client.get("/api/settings").json()["keys"] == {"elevenlabs": False, "anthropic": False}
+    assert client.get("/api/settings").json()["keys"] == {
+        "elevenlabs": False,
+        "anthropic": False,
+        "openai": False,
+    }
 
 
 # --------------------------------------------------------------------------- commentary

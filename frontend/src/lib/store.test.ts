@@ -82,7 +82,7 @@ describe('store via dispatchMessage', () => {
   })
 
   it('setSettings switches the UI language', () => {
-    const settings = { ui_language: 'it', keys: { elevenlabs: false, anthropic: false } } as SettingsResponse
+    const settings = { ui_language: 'it', keys: { elevenlabs: false, anthropic: false, openai: false } } as SettingsResponse
     useStore.getState().setSettings(settings)
     expect(useStore.getState().language).toBe('it')
   })

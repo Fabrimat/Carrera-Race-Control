@@ -43,7 +43,7 @@ from pydantic import BaseModel
 
 from app.api.ws import WsHub, encode
 from app.commentary.director import CommentaryDirector
-from app.commentary.llm import AnthropicWriter, LineWriter, TemplateWriter
+from app.commentary.llm import AnthropicWriter, LineWriter, OpenAIWriter, TemplateWriter
 from app.commentary.tts import DEFAULT_MODEL_ID, BudgetTracker, ElevenLabsTTS, TTSClient
 from app.config import AppConfig, TrackMode
 from app.race.engine import RaceEngine
@@ -87,6 +87,10 @@ START_SECOND_PRESS_S = 2.5
 CLOSE_TIMEOUT_S = 5.0
 COMMENTARY_HISTORY = 50
 SEEDED_COUNTER = "settings:seeded"
+FALLBACK_NOTES = {
+    "en": "OpenAI is selected but has no API key: this photo was read by Anthropic.",
+    "it": "OpenAI è selezionato ma senza chiave API: questa foto è stata letta da Anthropic.",
+}
 
 _ACTIVE = (RacePhase.STARTING, RacePhase.RUNNING, RacePhase.PAUSED)
 
@@ -156,6 +160,21 @@ class ControllerError(Exception):
 
 
 # --------------------------------------------------------------------------- helpers
+
+
+class SwitchableWriter:
+    """The writer handed to the director: delegates to whichever writer is current, so a
+    provider change in the settings takes effect without touching the director."""
+
+    def __init__(self, inner: LineWriter) -> None:
+        self.inner = inner
+
+    @property
+    def available(self) -> bool:
+        return bool(getattr(self.inner, "available", True))
+
+    async def write_line(self, candidate: Any, context: dict[str, Any]) -> str:
+        return await self.inner.write_line(candidate, context)
 
 
 class ScaledClock:
@@ -250,10 +269,14 @@ class RaceController:
             get_monthly=lambda: self.store.get_counter(_month_key()),
             add_monthly=lambda n: self.store.add_to_counter(_month_key(), n),
         )
+        # An injected writer (tests) is never replaced; the default one follows the settings.
+        self._writer_injected = writer is not None
+        self._switchable = SwitchableWriter(writer if writer is not None else self._build_writer())
+        self._writer_signature = self._writer_key()
         self.director = CommentaryDirector(
             self.settings.commentary,
             cars=lambda: {c.address: c for c in self.settings.cars},
-            writer=writer if writer is not None else self._default_writer(),
+            writer=self._switchable,
             tts=self.tts,
             budget=self.budget,
             on_line=self._on_line,
@@ -281,7 +304,15 @@ class RaceController:
             # Fresh settings DB: seed the defaults that come from the environment.
             settings.commentary.language = self.config.commentary_lang
             # The LLM writes the lines whenever a key exists; an explicit choice is never flipped.
-            settings.commentary.llm_enabled = self.config.has_anthropic_key()
+            settings.commentary.llm_enabled = (
+                self.config.has_anthropic_key() or self.config.has_openai_key()
+            )
+            # The provider whose key exists, preferring Anthropic.
+            settings.commentary.llm_provider = (
+                "openai"
+                if self.config.has_openai_key() and not self.config.has_anthropic_key()
+                else "anthropic"
+            )
             settings.track = TrackSettings(
                 mode=self.config.track_mode, address=self.config.track_address
             )
@@ -299,16 +330,37 @@ class RaceController:
             language_code=self.settings.commentary.language,
         )
 
-    def _default_writer(self) -> LineWriter:
+    def _writer_key(self) -> tuple[str, bool]:
+        provider = self.settings.commentary.llm_provider
+        has_key = (
+            self.config.has_openai_key()
+            if provider == "openai"
+            else self.config.has_anthropic_key()
+        )
+        return provider, has_key
+
+    def _build_writer(self) -> LineWriter:
         # The director only uses the writer when settings.commentary.llm_enabled is on, so
-        # with a key present the Anthropic writer is always wired and toggling works live.
-        if self.config.has_anthropic_key():
-            assert self.config.anthropic_api_key is not None
-            return AnthropicWriter(
-                self.config.anthropic_api_key.get_secret_value(),
-                model=self.config.anthropic_model,
+        # with a key present the chosen provider's writer is always wired and toggling works
+        # live. A provider without a key falls back to the templates.
+        provider, has_key = self._writer_key()
+        if not has_key:
+            return TemplateWriter()
+        if provider == "openai":
+            assert self.config.openai_api_key is not None
+            return OpenAIWriter(
+                self.config.openai_api_key.get_secret_value(), model=self.config.openai_model
             )
-        return TemplateWriter()
+        assert self.config.anthropic_api_key is not None
+        return AnthropicWriter(
+            self.config.anthropic_api_key.get_secret_value(), model=self.config.anthropic_model
+        )
+
+    def _refresh_writer(self) -> None:
+        if self._writer_injected or self._writer_key() == self._writer_signature:
+            return
+        self._writer_signature = self._writer_key()
+        self._switchable.inner = self._build_writer()
 
     def _default_track(self, mode: TrackMode, address: str | None) -> TrackInterface:
         if mode == "simulator":
@@ -866,6 +918,7 @@ class RaceController:
             # Used when a race is started from the CU's own START button.
             self.engine.config = settings.race
         self.director.update_settings(settings.commentary)
+        self._refresh_writer()
         if isinstance(self.tts, ElevenLabsTTS):
             self.tts.language_code = settings.commentary.language
         self._save_settings()
@@ -916,21 +969,38 @@ class RaceController:
         """Ask the vision model for a draft map. Nothing is saved and nothing is logged."""
         from app.track.vision import VisionError, layout_from_photo
 
-        key = self.config.anthropic_api_key
+        # OpenAI selected without its key: fall back to Anthropic when that key exists (and
+        # say so in the draft notes), otherwise fail naming OpenAI.
+        wants_openai = self.settings.commentary.llm_provider == "openai"
+        fell_back = (
+            wants_openai and not self.config.has_openai_key() and self.config.has_anthropic_key()
+        )
+        use_openai = wants_openai and not fell_back
+        provider: Literal["anthropic", "openai"] = "openai" if use_openai else "anthropic"
+        key = self.config.openai_api_key if use_openai else self.config.anthropic_api_key
+        model = (
+            self.config.openai_vision_model if use_openai else self.config.anthropic_vision_model
+        )
         if self._photo_lock.locked():
             raise ControllerError(429, "Another photo is being analysed", "photo_busy")
         async with self._photo_lock:
             try:
-                return await layout_from_photo(
+                draft = await layout_from_photo(
                     api_key=key.get_secret_value() if key is not None else None,
-                    model=self.config.anthropic_vision_model,
+                    model=model,
+                    provider=provider,
                     image_base64=image_base64,
                     name=name,
                     language=language,
                     client=self._vision_client,
+                    reasoning_effort=self.config.openai_vision_reasoning,
                 )
             except VisionError as exc:
                 raise ControllerError(exc.status, exc.detail, exc.code) from exc
+        if fell_back:
+            note = FALLBACK_NOTES.get(language, FALLBACK_NOTES["en"])
+            draft = draft.model_copy(update={"notes": f"{draft.notes} {note}".strip()})
+        return draft
 
     def _save_settings(self) -> None:
         try:

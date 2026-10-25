@@ -367,3 +367,103 @@ async def test_400_not_about_thinking_is_not_retried() -> None:
         )
     assert info.value.code == "photo_unrecognised"
     assert len(client.messages.calls) == 1
+
+
+# --------------------------------------------------------------------------- OpenAI
+
+
+class FakeResponses:
+    def __init__(self, text: str | None, error: Exception | None) -> None:
+        self.text = text
+        self.error = error
+        self.calls: list[dict[str, Any]] = []
+
+    async def create(self, **kwargs: Any) -> Any:
+        self.calls.append(kwargs)
+        if self.error is not None:
+            raise self.error
+        block = SimpleNamespace(type="output_text", text=self.text)
+        return SimpleNamespace(output=[SimpleNamespace(type="message", content=[block])])
+
+
+def fake_openai(text: str | None = None, error: Exception | None = None) -> Any:
+    return SimpleNamespace(responses=FakeResponses(text, error))
+
+
+async def test_openai_request_is_a_data_url_image_plus_the_same_prompt() -> None:
+    client = fake_openai("Here you go: " + reply())
+    image_b64 = b64(make_png(120, 80))
+    draft = await layout_from_photo(
+        api_key="k",
+        model="vision-model",
+        image_base64=image_b64,
+        name="Oval",
+        language="it",
+        client=client,
+        provider="openai",
+    )
+    assert draft.layout.aspect == pytest.approx(1.5)
+    assert len(draft.layout.points) == 200
+    call = client.responses.calls[0]
+    assert call["model"] == "vision-model"
+    assert call["store"] is False
+    text, image = call["input"][0]["content"]
+    assert image["type"] == "input_image"
+    assert image["image_url"] == f"data:image/png;base64,{image_b64}"
+    assert text["type"] == "input_text" and "Italian" in text["text"]
+    assert "0..1000 grid" in text["text"]
+
+
+async def test_openai_no_key_is_llm_unavailable() -> None:
+    with pytest.raises(VisionError) as info:
+        await layout_from_photo(
+            api_key=None,
+            model="m",
+            image_base64=b64(make_png()),
+            name="n",
+            language="en",
+            provider="openai",
+        )
+    assert (info.value.status, info.value.code) == (503, "llm_unavailable")
+    assert "OpenAI" in info.value.detail
+
+
+@pytest.mark.parametrize(
+    ("status", "code"),
+    [
+        (401, "llm_unavailable"),
+        (403, "llm_unavailable"),
+        (404, "llm_unavailable"),
+        (429, "llm_unavailable"),
+        (500, "llm_unavailable"),
+        (None, "llm_unavailable"),
+        (400, "photo_unrecognised"),
+    ],
+)
+async def test_openai_errors_map_like_anthropic(status: int | None, code: str) -> None:
+    error = ApiError(status) if status else ConnectionError("down")
+    with pytest.raises(VisionError) as info:
+        await layout_from_photo(
+            api_key="k",
+            model="m",
+            image_base64=b64(make_png()),
+            name="n",
+            language="en",
+            client=fake_openai(error=error),
+            provider="openai",
+        )
+    assert info.value.code == code
+
+
+async def test_openai_unusable_reply_is_photo_unrecognised() -> None:
+    with pytest.raises(VisionError) as info:
+        await layout_from_photo(
+            api_key="k",
+            model="m",
+            image_base64=b64(make_png()),
+            name="n",
+            language="en",
+            client=fake_openai("sorry, no json"),
+            provider="openai",
+        )
+    assert info.value.code == "photo_unrecognised"

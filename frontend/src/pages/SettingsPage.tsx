@@ -132,6 +132,17 @@ export function SettingsPage() {
             <input type="checkbox" checked={s.commentary.llm_enabled} onChange={(e) => editCom({ llm_enabled: e.target.checked })} />
             {t('settings.llm_enabled')}
           </label>
+          <Field label={t('settings.llm_provider')}>
+            <select
+              className={input}
+              data-testid="llm-provider"
+              value={s.commentary.llm_provider}
+              onChange={(e) => editCom({ llm_provider: e.target.value as CommentarySettings['llm_provider'] })}
+            >
+              <option value="anthropic">Anthropic</option>
+              <option value="openai">OpenAI</option>
+            </select>
+          </Field>
           <Field label={t('settings.voice_id')}>
             <input
               className={input}
@@ -185,6 +196,7 @@ export function SettingsPage() {
         <div className="flex flex-wrap gap-3">
           <KeyBadge ok={loaded.keys.elevenlabs} label="ElevenLabs" />
           <KeyBadge ok={loaded.keys.anthropic} label="Anthropic" />
+          <KeyBadge ok={loaded.keys.openai} label="OpenAI" />
         </div>
         <p className="mt-2 text-sm text-dim">{t('settings.keys_hint')}</p>
       </section>

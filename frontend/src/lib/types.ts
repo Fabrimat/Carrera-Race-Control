@@ -208,6 +208,7 @@ export interface CommentarySettings {
   verbosity: Verbosity
   tts_enabled: boolean
   llm_enabled: boolean
+  llm_provider: 'anthropic' | 'openai'
   audio_output: 'browser' | 'local'
   session_char_budget: number
   monthly_char_budget: number
@@ -228,7 +229,7 @@ export interface Settings {
 }
 
 export interface SettingsResponse extends Settings {
-  keys: { elevenlabs: boolean; anthropic: boolean }
+  keys: { elevenlabs: boolean; anthropic: boolean; openai: boolean }
 }
 
 // ------------------------------------------------------------------ REST shapes

@@ -126,7 +126,7 @@ describe('TrackEditor', () => {
     render(<TrackEditor layout="Photo" />)
     await screen.findByTestId('track-canvas')
     fireEvent.click(screen.getByRole('button', { name: 'From a photo' }))
-    expect(screen.getByTestId('photo-notice')).toHaveTextContent(/sent to Anthropic/)
+    expect(screen.getByTestId('photo-notice')).toHaveTextContent(/sent to the selected AI provider/)
     expect(screen.getByTestId('photo-notice')).toHaveTextContent(/re-encoded in your browser/)
     const file = new File(['x'], 'track.jpg', { type: 'image/jpeg' })
     fireEvent.change(screen.getByTestId('photo-input'), { target: { files: [file] } })

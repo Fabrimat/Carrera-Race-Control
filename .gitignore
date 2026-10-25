@@ -17,3 +17,6 @@ frontend/playwright-report/
 *.sqlite3
 *.db
 backend/data/
+
+# Agent worktrees
+.claude/worktrees/

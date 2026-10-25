@@ -49,6 +49,7 @@ def make_config(tmp_path: Path, **overrides: Any) -> AppConfig:
         "elevenlabs_api_key": None,
         "elevenlabs_voice_id": None,
         "anthropic_api_key": None,
+        "openai_api_key": None,
         "replay_file": None,
         "commentary_lang": "it",
         "sim_cars": 3,
@@ -983,10 +984,81 @@ def test_writer_depends_on_the_anthropic_key(tmp_path: Path) -> None:
 
     tts = FakeTTS(available=False)
     ctl = RaceController(make_config(tmp_path), RaceStore(":memory:"), tts=tts)
-    assert isinstance(ctl.director._writer, TemplateWriter)
+    assert isinstance(ctl.director._writer.inner, TemplateWriter)
     config = make_config(tmp_path, anthropic_api_key="k")
     ctl = RaceController(config, RaceStore(":memory:"), tts=tts)
-    assert isinstance(ctl.director._writer, AnthropicWriter)
+    assert isinstance(ctl.director._writer.inner, AnthropicWriter)
+
+
+def test_fresh_db_seeds_the_provider_whose_key_exists(tmp_path: Path) -> None:
+    def seeded(**keys: str) -> Any:
+        config = make_config(tmp_path, **keys)
+        return make_controller(
+            tmp_path, store=RaceStore(":memory:"), config=config
+        ).settings.commentary
+
+    both = seeded(anthropic_api_key="a", openai_api_key="o")
+    assert (both.llm_provider, both.llm_enabled) == ("anthropic", True)
+    only_openai = seeded(openai_api_key="o")
+    assert (only_openai.llm_provider, only_openai.llm_enabled) == ("openai", True)
+    none = seeded()
+    assert (none.llm_provider, none.llm_enabled) == ("anthropic", False)
+
+
+def test_writer_follows_the_provider_setting(tmp_path: Path) -> None:
+    from app.commentary.llm import AnthropicWriter, OpenAIWriter
+
+    config = make_config(tmp_path, anthropic_api_key="a", openai_api_key="o")
+    ctl = RaceController(config, RaceStore(":memory:"), tts=FakeTTS(available=False))
+    inner = ctl.director._writer.inner
+    assert isinstance(inner, AnthropicWriter)
+    ctl.update_settings(ctl.settings)  # unchanged provider: the same writer is kept
+    assert ctl.director._writer.inner is inner
+
+    settings = ctl.settings.model_copy(deep=True)
+    settings.commentary.llm_provider = "openai"
+    ctl.update_settings(settings)
+    writer = ctl.director._writer.inner
+    assert isinstance(writer, OpenAIWriter)
+    assert writer.model == config.openai_model
+
+    ctl.update_settings(ctl.settings.model_copy(deep=True))  # still openai
+    assert ctl.director._writer.inner is writer
+
+    # The chosen provider has no key: templates.
+    no_key = RaceController(
+        make_config(tmp_path, anthropic_api_key="a"),
+        RaceStore(":memory:"),
+        tts=FakeTTS(available=False),
+    )
+    settings = no_key.settings.model_copy(deep=True)
+    settings.commentary.llm_provider = "openai"
+    no_key.update_settings(settings)
+    assert isinstance(no_key.director._writer.inner, TemplateWriter)
+    assert no_key.director._writer.available is False
+
+
+async def test_photo_uses_openai_only_when_chosen_and_keyed(tmp_path: Path) -> None:
+    from tests.test_vision import b64, fake_openai, make_png, reply
+
+    vision = fake_openai(reply())
+    config = make_config(tmp_path, anthropic_api_key="a", openai_api_key="o")
+    ctl = RaceController(
+        config, RaceStore(":memory:"), tts=FakeTTS(available=False), vision_client=vision
+    )
+    settings = ctl.settings.model_copy(deep=True)
+    settings.commentary.llm_provider = "openai"
+    ctl.update_settings(settings)
+    await ctl.layout_from_photo(b64(make_png()), "Oval", "en")
+    assert vision.responses.calls[0]["model"] == config.openai_vision_model
+
+    # Anthropic chosen: the Anthropic path is used (this fake has no Messages API).
+    settings = ctl.settings.model_copy(deep=True)
+    settings.commentary.llm_provider = "anthropic"
+    ctl.update_settings(settings)
+    with pytest.raises(ControllerError):
+        await ctl.layout_from_photo(b64(make_png()), "Oval", "en")
+    assert len(vision.responses.calls) == 1
 
 
 # --------------------------------------------------------------------------- track layouts
@@ -1150,3 +1222,51 @@ async def test_second_concurrent_photo_conversion_gets_photo_busy(tmp_path: Path
     assert (await first).layout.source == "photo"
     # The lock is free again afterwards.
     assert (await ctl.layout_from_photo(b64(make_png()), "n", "en")).layout.name == "n"
+
+
+async def test_photo_openai_without_key_falls_back_to_anthropic_and_says_so(
+    tmp_path: Path,
+) -> None:
+    from tests.test_vision import b64, fake_client, make_png, reply
+
+    config = make_config(tmp_path, anthropic_api_key="a")
+    ctl = RaceController(
+        config,
+        RaceStore(":memory:"),
+        tts=FakeTTS(available=False),
+        vision_client=fake_client(reply(notes="hidden bend")),
+    )
+    settings = ctl.settings.model_copy(deep=True)
+    settings.commentary.llm_provider = "openai"
+    ctl.update_settings(settings)
+    draft = await ctl.layout_from_photo(b64(make_png()), "Oval", "it")
+    assert "hidden bend" in draft.notes and "Anthropic" in draft.notes
+    assert "OpenAI" in draft.notes
+
+
+async def test_photo_openai_without_any_key_names_openai(tmp_path: Path) -> None:
+    from tests.test_vision import b64, make_png
+
+    ctl = RaceController(make_config(tmp_path), RaceStore(":memory:"), tts=FakeTTS(available=False))
+    settings = ctl.settings.model_copy(deep=True)
+    settings.commentary.llm_provider = "openai"
+    ctl.update_settings(settings)
+    with pytest.raises(ControllerError) as info:
+        await ctl.layout_from_photo(b64(make_png()), "Oval", "en")
+    assert (info.value.status, info.value.code) == (503, "llm_unavailable")
+    assert "OpenAI" in info.value.detail
+
+
+async def test_photo_openai_reasoning_effort_comes_from_config(tmp_path: Path) -> None:
+    from tests.test_vision import b64, fake_openai, make_png, reply
+
+    vision = fake_openai(reply())
+    config = make_config(tmp_path, openai_api_key="o", openai_vision_reasoning="medium")
+    ctl = RaceController(
+        config, RaceStore(":memory:"), tts=FakeTTS(available=False), vision_client=vision
+    )
+    settings = ctl.settings.model_copy(deep=True)
+    settings.commentary.llm_provider = "openai"
+    ctl.update_settings(settings)
+    await ctl.layout_from_photo(b64(make_png()), "Oval", "en")
+    assert vision.responses.calls[0]["reasoning"] == {"effort": "medium"}
