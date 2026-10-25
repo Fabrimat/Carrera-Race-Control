@@ -10,6 +10,8 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -130,7 +132,8 @@ class RaceStore:
     """Single-file SQLite store. Use ``":memory:"`` for an in-process database."""
 
     def __init__(self, path: str | Path) -> None:
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
+        self._in_transaction = False
         if str(path) == ":memory:":
             db_target = ":memory:"
         else:
@@ -142,10 +145,48 @@ class RaceStore:
         self._conn.execute("PRAGMA foreign_keys = ON")
         self._init_schema()
 
+    # ------------------------------------------------------------------ transactions
+
+    @contextmanager
+    def _write(self) -> Iterator[None]:
+        """Lock + commit for one write; inside :meth:`transaction` just the (re-entrant) lock."""
+        with self._lock:
+            if self._in_transaction:
+                yield
+            else:
+                with self._conn:
+                    yield
+
+    @contextmanager
+    def transaction(self, *, commit: bool = True) -> Iterator[None]:
+        """Run several store calls atomically, holding the store lock throughout.
+
+        Commits on success when ``commit`` is true; rolls back when it is false (dry run) or
+        when the block raises. The store's write methods do not commit on their own inside.
+        """
+        with self._lock:
+            if self._in_transaction:
+                raise RuntimeError("Nested store transactions are not supported")
+            self._conn.commit()
+            self._conn.execute("BEGIN")
+            self._in_transaction = True
+            try:
+                yield
+            except BaseException:
+                self._conn.rollback()
+                raise
+            else:
+                if commit:
+                    self._conn.commit()
+                else:
+                    self._conn.rollback()
+            finally:
+                self._in_transaction = False
+
     # ------------------------------------------------------------------ setup
 
     def _init_schema(self) -> None:
-        with self._lock, self._conn:
+        with self._write():
             self._conn.executescript(_SCHEMA)
             row = self._conn.execute("SELECT version FROM schema_version").fetchone()
             if row is None:
@@ -172,7 +213,7 @@ class RaceStore:
     def create_race(self, config: RaceConfig, cars: list[CarConfig]) -> int:
         """Insert a new race and return its id."""
         cars_json = json.dumps([c.model_dump(mode="json") for c in cars])
-        with self._lock, self._conn:
+        with self._write():
             cursor = self._conn.execute(
                 "INSERT INTO races (started_at, mode, config_json, cars_json) VALUES (?, ?, ?, ?)",
                 (utcnow().isoformat(), config.mode.value, config.model_dump_json(), cars_json),
@@ -184,7 +225,7 @@ class RaceStore:
 
     def add_lap(self, race_id: int, lap: Lap) -> None:
         """Append a completed lap to a race. Raises sqlite3.IntegrityError for unknown races."""
-        with self._lock, self._conn:
+        with self._write():
             self._conn.execute(
                 "INSERT INTO laps (race_id, address, lap_number, lap_ms, race_time_ms, valid) "
                 "VALUES (?, ?, ?, ?, ?, ?)",
@@ -203,7 +244,7 @@ class RaceStore:
         results = sorted(state.cars, key=lambda c: (c.position is None, c.position or 0))
         winner = next((c for c in results if c.position == 1), None)
         results_json = json.dumps([c.model_dump(mode="json") for c in results])
-        with self._lock, self._conn:
+        with self._write():
             cursor = self._conn.execute(
                 "UPDATE races SET finished_at = ?, winner_name = ?, results_json = ? WHERE id = ?",
                 (
@@ -266,7 +307,7 @@ class RaceStore:
         return Settings.model_validate_json(row["value_json"])
 
     def save_settings(self, settings: Settings) -> None:
-        with self._lock, self._conn:
+        with self._write():
             self._conn.execute(
                 "INSERT OR REPLACE INTO settings (key, value_json) VALUES ('settings', ?)",
                 (settings.model_dump_json(),),
@@ -289,7 +330,7 @@ class RaceStore:
 
     def set_record(self, info: TrackRecordInfo) -> None:
         """Insert or replace the record of ``info.layout``."""
-        with self._lock, self._conn:
+        with self._write():
             self._conn.execute(
                 "INSERT OR REPLACE INTO track_records "
                 "(layout, lap_ms, address, holder_name, race_id, set_at) VALUES (?, ?, ?, ?, ?, ?)",
@@ -305,7 +346,7 @@ class RaceStore:
 
     def delete_record(self, layout: str) -> bool:
         """Remove a layout's record; False when there was none."""
-        with self._lock, self._conn:
+        with self._write():
             cursor = self._conn.execute("DELETE FROM track_records WHERE layout = ?", (layout,))
         return cursor.rowcount > 0
 
@@ -327,7 +368,7 @@ class RaceStore:
     def save_layout(self, layout: TrackLayout) -> TrackLayout:
         """Insert or replace a layout; ``updated_at`` is stamped now."""
         saved = layout.model_copy(update={"updated_at": utcnow()})
-        with self._lock, self._conn:
+        with self._write():
             self._conn.execute(
                 "INSERT OR REPLACE INTO track_layouts (name, json, updated_at) VALUES (?, ?, ?)",
                 (saved.name, saved.model_dump_json(), saved.updated_at.isoformat()),
@@ -336,7 +377,7 @@ class RaceStore:
 
     def delete_layout(self, name: str) -> bool:
         """Remove a layout; False when there was none."""
-        with self._lock, self._conn:
+        with self._write():
             cursor = self._conn.execute("DELETE FROM track_layouts WHERE name = ?", (name,))
         return cursor.rowcount > 0
 
@@ -359,7 +400,7 @@ class RaceStore:
 
     def save_driver(self, driver: Driver) -> Driver:
         """Insert or replace a driver by id."""
-        with self._lock, self._conn:
+        with self._write():
             self._conn.execute(
                 "INSERT OR REPLACE INTO drivers (id, name, json) VALUES (?, ?, ?)",
                 (driver.id, driver.name, driver.model_dump_json()),
@@ -367,7 +408,7 @@ class RaceStore:
         return driver
 
     def delete_driver(self, driver_id: str) -> bool:
-        with self._lock, self._conn:
+        with self._write():
             cursor = self._conn.execute("DELETE FROM drivers WHERE id = ?", (driver_id,))
         return cursor.rowcount > 0
 
@@ -391,7 +432,7 @@ class RaceStore:
     def save_program(self, program: EventProgram) -> EventProgram:
         """Insert or replace a program; ``updated_at`` is stamped now."""
         saved = program.model_copy(update={"updated_at": utcnow()})
-        with self._lock, self._conn:
+        with self._write():
             self._conn.execute(
                 "INSERT OR REPLACE INTO programs (id, json, updated_at) VALUES (?, ?, ?)",
                 (saved.id, saved.model_dump_json(), saved.updated_at.isoformat()),
@@ -399,7 +440,7 @@ class RaceStore:
         return saved
 
     def delete_program(self, program_id: str) -> bool:
-        with self._lock, self._conn:
+        with self._write():
             cursor = self._conn.execute("DELETE FROM programs WHERE id = ?", (program_id,))
         return cursor.rowcount > 0
 
@@ -411,7 +452,7 @@ class RaceStore:
         return EventState.model_validate_json(row["json"]) if row is not None else EventState()
 
     def save_event_state(self, state: EventState) -> None:
-        with self._lock, self._conn:
+        with self._write():
             self._conn.execute(
                 "INSERT OR REPLACE INTO event_state (id, json) VALUES (1, ?)",
                 (state.model_dump_json(),),
@@ -426,7 +467,7 @@ class RaceStore:
 
     def add_to_counter(self, key: str, amount: int) -> int:
         """Add ``amount`` to the counter (created at 0 if missing); return the new value."""
-        with self._lock, self._conn:
+        with self._write():
             self._conn.execute(
                 "INSERT INTO counters (key, value) VALUES (?, ?) "
                 "ON CONFLICT(key) DO UPDATE SET value = value + excluded.value",

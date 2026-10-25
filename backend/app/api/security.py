@@ -6,7 +6,8 @@
 * **Cross-site WebSocket hijacking**: ``/ws`` refuses handshakes whose ``Origin`` is not
   allowed (see :func:`origin_allowed`, used by the route).
 * **Body size**: :class:`BodyLimitMiddleware` answers 413 to bodies above 1 MB (12 MB for
-  the photo upload), by ``Content-Length`` and while streaming chunked bodies.
+  the photo upload, 5 MB for a configuration import), by ``Content-Length`` and while
+  streaming chunked bodies.
 * **DNS rebinding**: ``TrustedHostMiddleware`` (wired in ``main.py``) only accepts the
   configured ``Host`` names.
 
@@ -84,6 +85,8 @@ PHOTO_BODY_LIMIT = 12 * 1024 * 1024  # base64 of 8 MB is ~10.7 MB, plus the JSON
 # Driver photos and spoken names are at most 2 MB decoded (~2.8 MB of base64 in JSON).
 DRIVER_MEDIA_LIMIT = 3 * 1024 * 1024
 TRANSCRIBE_PATH = "/api/event/transcribe"
+IMPORT_PATH = "/api/import"
+IMPORT_BODY_LIMIT = 5 * 1024 * 1024  # the UI caps bundle files at 5 MB
 _DRIVER_PHOTO_RE = re.compile(r"^/api/drivers/[^/]+/photo$")
 
 
@@ -95,6 +98,8 @@ def _body_rule(path: str) -> tuple[int, bool]:
         return DRIVER_MEDIA_LIMIT, True
     if path == TRANSCRIBE_PATH:
         return DRIVER_MEDIA_LIMIT, False
+    if path == IMPORT_PATH:
+        return IMPORT_BODY_LIMIT, False
     return DEFAULT_BODY_LIMIT, False
 
 

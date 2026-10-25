@@ -158,6 +158,8 @@ ErrorCode = Literal[
     "image_too_large",
     "invalid_image",
     "forbidden_origin",
+    "import_invalid",
+    "import_unsupported",
     "invalid_request",
     "transcription_failed",
     # Track errors (TrackErrorCode) are passed through as they are:
@@ -1114,6 +1116,30 @@ class RaceController:
 
     def cars_by_address(self) -> dict[int, CarConfig]:
         return {c.address: c for c in self.settings.cars}
+
+    # ------------------------------------------------------------------ configuration import
+    # Called after a committed import (app/race/bundle.py); the database is already updated.
+
+    def refresh_after_import(self, settings: Settings | None, removed_driver_ids: set[str]) -> None:
+        """Bring the in-memory caches in line with imported data. Never touches the track."""
+        self._drivers_cache = None
+        if settings is not None:
+            self.update_settings(settings)  # also stores the settings and refreshes the UI
+        self._refresh_layout()
+        self._record_layout = self.settings.track.layout
+        self.track_record = self._load_record(self._record_layout)
+        if removed_driver_ids:
+
+            def drop(state: EventState) -> None:
+                state.assignments = {
+                    a: d for a, d in state.assignments.items() if d not in removed_driver_ids
+                }
+                if state.armed_driver_id in removed_driver_ids:
+                    state.armed_driver_id = None
+                    state.armed_until = None
+
+            self._update_event_state(drop)
+        self._mark_dirty()
 
     # ------------------------------------------------------------------ event mode: drivers
     # Drivers roster, assignments (address -> driver id) and "assign on next crossing".
