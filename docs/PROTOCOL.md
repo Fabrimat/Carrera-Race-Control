@@ -143,6 +143,13 @@ declared in the current layout or seen during the race. The engine emits a
 `CarState.current_sectors`, `last_sectors`, `best_sectors` and `RaceState.best_sectors`
 carry the splits. Without Check Lanes nothing changes (`num_sectors` = 1).
 
+### Coordinates
+
+`TrackLayout.points` are normalised 0..1 in both axes; `aspect` = width/height. Every
+fraction `s` along the lap (sensors, `pit_s`, `TrackPosition`) is measured by path
+length in display space: the points scaled to `(x * aspect, y)`. Frontend code must
+scale the points first and then use the geometry helpers on the scaled points.
+
 ### Live position estimate
 
 Every car has `last_crossing` (sensor + race time) and `segment_estimates` (learned

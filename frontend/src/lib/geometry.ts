@@ -146,3 +146,13 @@ export function approach(p: number): number {
 export function shortestDelta(a: number, b: number): number {
   return ((((b - a) % 1) + 1.5) % 1) - 0.5
 }
+
+/** Points in display space (x * aspect, y): the space in which every `s` is measured. */
+export function toDisplay(points: Pt[], aspect: number): Pt[] {
+  return points.map(([x, y]) => [x * aspect, y])
+}
+
+/** Inverse of toDisplay. */
+export function fromDisplay(points: Pt[], aspect: number): Pt[] {
+  return points.map(([x, y]) => [x / aspect, y])
+}

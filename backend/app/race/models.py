@@ -348,9 +348,10 @@ class TrackLayout(BaseModel):
 
     `points` is the closed centre line in DRIVING ORDER, normalised to 0..1 in both axes
     (x right, y down), starting at the start/finish line: points[0] is the line and the
-    path implicitly closes from points[-1] back to points[0]. Fractions `s` are measured
-    by path length along this polyline. `aspect` = width / height of the drawing, so the
-    UI can render it undistorted.
+    path implicitly closes from points[-1] back to points[0]. `aspect` = width / height of
+    the drawing. Fractions `s` (sensors, pit, car positions) are measured by path length
+    in DISPLAY space, i.e. on the points scaled to (x * aspect, y), so that equal track
+    lengths map to equal `s` whatever the drawing's proportions.
     """
 
     name: str = Field(min_length=1, max_length=40)  # == TrackSettings.layout
