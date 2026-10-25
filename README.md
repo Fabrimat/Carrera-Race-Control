@@ -6,6 +6,8 @@ Everything also works without a track thanks to a built-in simulator. The interf
 
 This is an unofficial tool. See the [trademark notice](#trademarks).
 
+![Race control dashboard in the middle of a simulated race: leaderboard with sector times, live track map, lap chart, commentary and event log](docs/images/dashboard-race-control.jpg)
+
 ## Features
 
 - Live leaderboard: position, lap count, last and best lap (purple for the overall best), gap to leader, fuel bar, pit badge, animated position changes.
@@ -17,6 +19,42 @@ This is an unofficial tool. See the [trademark notice](#trademarks).
 - Robust connection handling: reconnect with backoff, clear error messages (for example "close the Carrera app"), graceful shutdown.
 - Raw session recording and replay, so a real race can be reused in tests.
 - UI and commentary in English and Italian.
+
+## Screenshots
+
+All images were captured from the built-in simulator with demo data (fictional drivers and cars).
+
+**TV mode** (`#/tv`): start lights, then the live leaderboard tower, track map and race banners such as "Fastest lap" and "Final lap".
+
+![TV mode start lights counting down before the race](docs/images/tv-start-lights.gif)
+
+![TV mode during a race: a Fastest lap banner over the leaderboard tower and live track map](docs/images/tv-banners-and-tower.gif)
+
+![TV mode with the Final lap banner](docs/images/tv-mode-leaderboard-and-map.jpg)
+
+**Live track map**: cars move along the drawn layout, with the Check Lane sensors S2 and S3 marked.
+
+![Live track map with five cars moving around the layout](docs/images/live-track-map.gif)
+
+**Track editor** (`#/track`): draw the layout, place the Check Lane sensors and the start/finish line, or start from a photo.
+
+![Track editor with control points, two Check Lane sensors, the start/finish line and the pit marker](docs/images/track-editor.jpg)
+
+**Drivers and "Who's driving?"** (`#/drivers`): a reusable roster, and one tile per controller to assign the driver.
+
+![Drivers roster and the Who's driving tiles, one per controller](docs/images/drivers-and-whos-driving.jpg)
+
+**Event program** (`#/event`): practice, qualifying and race sessions with false start rules, starting order and context for the commentator.
+
+![Event program editor with three sessions and the commentary context](docs/images/event-program-editor.jpg)
+
+**Race history**: results, lap times and CSV or JSON export of every race.
+
+![Race detail in the history with the results table and the lap time chart](docs/images/history-race-detail.jpg)
+
+**Settings**: car names, colors and spoken nicknames, language, commentary options.
+
+![Settings page with the car names, nicknames and colors](docs/images/settings.jpg)
 
 ## Hardware
 
