@@ -1,14 +1,20 @@
 // Builds the standalone backend with PyInstaller (onedir) into backend/build/pyi-dist/.
 import { rmSync } from 'node:fs'
 import { join } from 'node:path'
-import { backendDir, run } from './lib.mjs'
+import { backendDir, run, targetArch } from './lib.mjs'
 
 rmSync(join(backendDir, 'build', 'pyi-dist'), { recursive: true, force: true })
-run('uv', ['sync', '--group', 'dev'], backendDir)
+const arch = targetArch()
+// windows-curses (a Windows-only dependency of carreralib, used by its terminal UI only) has no
+// win_arm64 wheel and no sdist, so it cannot be installed on ARM64; the backend never imports curses.
+const syncArgs = ['sync', '--group', 'dev']
+if (arch === 'arm64') syncArgs.push('--no-install-package', 'windows-curses')
+run('uv', syncArgs, backendDir)
 run(
   'uv',
   [
     'run',
+    '--no-sync', // keep the environment exactly as synced above
     'pyinstaller',
     'packaging/carrera-backend.spec',
     '--noconfirm',

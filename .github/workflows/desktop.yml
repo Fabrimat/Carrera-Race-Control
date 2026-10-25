@@ -1,0 +1,130 @@
+name: Desktop installers
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - desktop/**
+      - backend/**
+      - frontend/**
+      - .env.example
+      - .github/workflows/desktop.yml
+    tags: ['v*']
+  release:
+    types: [published]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: desktop-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Windows ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: windows-latest
+            python-arch: x64
+          - arch: arm64
+            # PyInstaller cannot cross-compile: ARM64 must build natively. Override with the
+            # repository variable ARM64_RUNNER (e.g. a larger-runner group label or self-hosted).
+            runner: ${{ vars.ARM64_RUNNER || 'windows-11-arm' }}
+            python-arch: arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - uses: actions/setup-python@v5
+        id: py
+        with:
+          python-version: '3.12'
+          architecture: ${{ matrix.python-arch }}
+
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+
+      - name: Backend tests
+        if: matrix.arch == 'x64'
+        working-directory: backend
+        env:
+          UV_PYTHON: ${{ steps.py.outputs.python-path }}
+        run: |
+          uv sync --group dev
+          uv run pytest -q
+
+      - name: Frontend tests
+        if: matrix.arch == 'x64'
+        working-directory: frontend
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm test --run
+
+      - name: Install desktop dependencies
+        working-directory: desktop
+        run: npm ci || npm install
+
+      - name: Use the release tag as the installer version
+        if: startsWith(github.ref, 'refs/tags/v')
+        working-directory: desktop
+        shell: bash
+        run: npm pkg set version="${GITHUB_REF_NAME#v}"
+
+      - name: Build installer
+        working-directory: desktop
+        env:
+          CARRERA_ARCH: ${{ matrix.arch }}
+          UV_PYTHON: ${{ steps.py.outputs.python-path }}
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: npm run dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Carrera-Race-Control-Setup-${{ matrix.arch }}
+          path: desktop/release/Carrera-Race-Control-Setup-*-${{ matrix.arch }}.exe
+          if-no-files-found: error
+
+  release:
+    name: GitHub Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: Carrera-Race-Control-Setup-*
+          path: dist
+          merge-multiple: true
+
+      # Idempotent: the same tag can trigger this workflow from the tag push and from the
+      # "release published" event; create the release only if it does not exist, then upload.
+      - name: Create the release if missing and attach the installers
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TAG" --generate-notes --verify-tag
+          fi
+          gh release upload "$TAG" dist/*.exe --repo "$GITHUB_REPOSITORY" --clobber
