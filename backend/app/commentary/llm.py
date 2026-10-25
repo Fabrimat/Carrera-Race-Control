@@ -81,8 +81,43 @@ _PROMPTS = {
 }
 
 
-def build_system_prompt(language: str) -> str:
-    return _PROMPTS.get(language, _PROMPTS[DEFAULT_LANGUAGE])
+# Event mode: the program's tone selects the style; the "use ONLY the facts" rule stays.
+_TONES = {
+    "en": {
+        "family": "Style: warm and family friendly, suitable for children; never mock anyone.",
+        "enthusiastic": "Style: enthusiastic and lively, like a big race on TV.",
+        "technical": "Style: precise and technical; favour times, gaps and sectors over hype.",
+        "ironic": "Style: light, good-natured irony; never offensive.",
+    },
+    "it": {
+        "family": "Stile: caldo e adatto alle famiglie e ai bambini; non prendere in giro nessuno.",
+        "enthusiastic": "Stile: entusiasta e vivace, come una grande gara in TV.",
+        "technical": "Stile: preciso e tecnico; privilegia tempi, distacchi e settori.",
+        "ironic": "Stile: ironia leggera e bonaria; mai offensiva.",
+    },
+}
+_EVENT_RULE = {
+    "en": (
+        "The JSON may contain an event block (event name, location, session, driver bios, "
+        "starting grid, sponsors, notes): use at most one of those details, only when it fits; "
+        "mention a sponsor only if sponsors are listed there."
+    ),
+    "it": (
+        "Il JSON può contenere un blocco event (nome evento, luogo, sessione, biografie dei "
+        "piloti, griglia di partenza, sponsor, note): usa al massimo uno di quei dettagli, solo "
+        "se è pertinente; cita uno sponsor solo se è elencato lì."
+    ),
+}
+
+
+def build_system_prompt(language: str, tone: str | None = None) -> str:
+    """The commentator prompt; ``tone`` (event mode) adds the style and the event-block rule."""
+    lang = language if language in _PROMPTS else DEFAULT_LANGUAGE
+    prompt = _PROMPTS[lang]
+    if tone is None:
+        return prompt
+    style = _TONES[lang].get(tone, "")
+    return " ".join(part for part in (prompt, _EVENT_RULE[lang], style) if part)
 
 
 def build_user_message(candidate: Candidate, context: dict[str, Any]) -> str:
@@ -153,7 +188,7 @@ class AnthropicWriter:
                     max_tokens=self.max_tokens,
                     # Newer Haiku models otherwise spend the whole budget on a thinking block.
                     thinking={"type": "disabled"},
-                    system=build_system_prompt(candidate.language),
+                    system=build_system_prompt(candidate.language, candidate.tone),
                     messages=[{"role": "user", "content": build_user_message(candidate, context)}],
                 ),
                 timeout=self.timeout_s,
@@ -240,7 +275,7 @@ class OpenAIWriter:
             response = await asyncio.wait_for(
                 self._client.responses.create(
                     model=self.model,
-                    instructions=build_system_prompt(candidate.language),
+                    instructions=build_system_prompt(candidate.language, candidate.tone),
                     input=build_user_message(candidate, context),
                     max_output_tokens=self.max_output_tokens,
                     # No reasoning: it would eat the output budget and add latency.

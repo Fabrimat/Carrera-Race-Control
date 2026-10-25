@@ -8,6 +8,8 @@ the prompt.
 
 from __future__ import annotations
 
+import re
+from dataclasses import dataclass, field
 from typing import Any
 
 from app.commentary import speech
@@ -15,7 +17,10 @@ from app.race.models import (
     BestLap,
     CarConfig,
     CarState,
+    Driver,
     DriverAssigned,
+    EventProgram,
+    FalseStart,
     LapCompleted,
     PositionChange,
     RaceEvent,
@@ -24,6 +29,8 @@ from app.race.models import (
     RaceStarted,
     RaceState,
     SectorCompleted,
+    SessionFinished,
+    SessionSpec,
     TrackRecord,
 )
 
@@ -100,7 +107,95 @@ def summarise_event(event: RaceEvent, cars: dict[int, CarConfig], lang: str) -> 
         summary["winner"] = _name(event.winner, cars)
     elif isinstance(event, RaceStarted):
         summary["mode"] = event.mode.value
+    elif isinstance(event, FalseStart):
+        summary["action"] = event.action
+    elif isinstance(event, SessionFinished):
+        summary["session_kind"] = event.kind.value
+        if event.order:
+            summary["winner"] = _name(event.order[0], cars)
     return summary
+
+
+# --------------------------------------------------------------------------- event mode
+
+
+@dataclass
+class EventCommentary:
+    """What the active event adds to the commentary (see docs/PROTOCOL.md "Event mode").
+
+    ``facts`` goes to the LLM as the ``event`` block; ``sponsors`` are added to it by the
+    director only when its sponsor rate limit allows; ``tone`` selects the prompt style;
+    ``avoid_words`` are enforced on the LLM text after the fact.
+    """
+
+    facts: dict[str, Any] = field(default_factory=dict)
+    tone: str | None = None
+    sponsors: list[str] = field(default_factory=list)
+    avoid_words: list[str] = field(default_factory=list)
+
+
+def mentions_any(text: str, words: list[str]) -> bool:
+    """True when ``text`` contains one of ``words`` as a whole word/phrase (case-insensitive)."""
+    folded = text.casefold()
+    for word in words:
+        needle = word.strip().casefold()
+        if needle and re.search(rf"(?<!\w){re.escape(needle)}(?!\w)", folded):
+            return True
+    return False
+
+
+def build_event_commentary(
+    program: EventProgram,
+    spec: SessionSpec,
+    index: int,
+    drivers: dict[int, Driver],
+    grid: dict[int, tuple[int, str]],
+    cars: dict[int, CarConfig],
+) -> EventCommentary:
+    """The ``event`` facts block for the LLM.
+
+    ``drivers``: address -> assigned driver; ``grid``: address -> (position, name) from the
+    session named by ``spec.grid_from`` (display only: "starts from P2").
+    """
+    ctx = program.commentary
+    facts: dict[str, Any] = {}
+    for key in ("event_name", "location", "notes"):
+        value = getattr(ctx, key).strip()
+        if value:
+            facts[key] = value
+    session: dict[str, Any] = {
+        "kind": spec.kind.value,
+        "number": index + 1,
+        "of": len(program.sessions),
+    }
+    if spec.name:
+        session["name"] = spec.name
+    facts["session"] = session
+    people: list[dict[str, Any]] = []
+    for address in sorted(set(drivers) | set(grid)):
+        driver = drivers.get(address)
+        entry: dict[str, Any] = {}
+        if driver is not None:
+            entry["driver"] = driver.nickname or driver.name
+            if driver.nickname:
+                entry["full_name"] = driver.name
+            if driver.bio.strip():
+                entry["bio"] = driver.bio.strip()
+            if address in cars:
+                entry["car"] = cars[address].nickname or cars[address].name
+        elif address in grid:
+            entry["driver"] = grid[address][1]
+        if address in grid:
+            entry["starts_from"] = f"P{grid[address][0]}"
+        people.append(entry)
+    if people:
+        facts["drivers"] = people
+    return EventCommentary(
+        facts=facts,
+        tone=ctx.tone,
+        sponsors=[s.strip() for s in ctx.sponsors if s.strip()],
+        avoid_words=[w.strip() for w in ctx.avoid_words if w.strip()],
+    )
 
 
 def _spoken_sectors(values: list[int | None], lang: str) -> dict[str, str]:

@@ -31,7 +31,13 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from app.commentary.context import RECENT_LINES, build_context, summarise_event
+from app.commentary.context import (
+    RECENT_LINES,
+    EventCommentary,
+    build_context,
+    mentions_any,
+    summarise_event,
+)
 from app.commentary.events import Candidate, candidates
 from app.commentary.llm import LineWriter
 from app.commentary.tts import MP3_BYTES_PER_SECOND, BudgetTracker, TTSClient
@@ -67,9 +73,13 @@ LLM_DEADLINE_S = {
     CommentaryPriority.LOW: 2.5,
 }
 IDLE_POLL_S = 0.1
+# Event mode: sponsors are offered to the LLM at most once per this interval (and an LLM line
+# naming a sponsor inside it falls back to the template), whatever the model does.
+SPONSOR_INTERVAL_S = 240.0
 
 LineCallback = Callable[[CommentaryLine], Awaitable[None]]
 StopCallback = Callable[[str], Awaitable[None]]
+EventInfo = Callable[[], EventCommentary | None]
 
 
 _BEST_LAP_KEYS = frozenset({"best_lap_overall", "best_lap_personal"})
@@ -127,6 +137,7 @@ class _Queued:
     context: dict[str, Any] = field(default_factory=dict)
     task: asyncio.Task[str | None] | None = None
     task_started: float = 0.0
+    event: EventCommentary | None = None  # event-mode rules for the LLM text
 
 
 @dataclass
@@ -158,6 +169,8 @@ class CommentaryDirector:
         which: Callable[[str], str | None] = shutil.which,
         mp3_bytes_per_second: int | None = MP3_BYTES_PER_SECOND,
         first_chunk_timeout_s: float = FIRST_CHUNK_TIMEOUT_S,
+        event_info: EventInfo | None = None,
+        sponsor_interval_s: float = SPONSOR_INTERVAL_S,
     ) -> None:
         self._settings = settings
         self._cars = cars
@@ -180,6 +193,9 @@ class CommentaryDirector:
         self._warned_ffplay = False
         self._spoken: deque[str] = deque(maxlen=RECENT_LINES)
         self._recent_events: deque[dict[str, Any]] = deque(maxlen=5)
+        self._event_info = event_info
+        self._sponsor_interval = sponsor_interval_s
+        self._last_sponsor_at = float("-inf")
 
     # ------------------------------------------------------------------ public API
 
@@ -215,6 +231,14 @@ class CommentaryDirector:
         except Exception:
             log.exception("commentary candidates failed for %s", getattr(event, "type", event))
             return
+        info = self._current_event_info() if cands else None
+        if info is not None:
+            block = dict(info.facts)
+            if info.sponsors and self._sponsors_allowed():
+                block["sponsors"] = list(info.sponsors)
+            for cand, ctx in zip(cands, contexts, strict=True):
+                cand.tone = info.tone
+                ctx["event"] = block
         if isinstance(event, TrackRecord) and cands:
             # A lap that is a track record is announced once: drop the best-lap lines the same
             # crossing queued just before (the controller emits TrackRecord after BestLap).
@@ -223,7 +247,7 @@ class CommentaryDirector:
         self._recent_events.append(summary)
         for cand, ctx in zip(cands, contexts, strict=True):
             self._seq += 1
-            item = _Queued(cand, now, self._seq, ctx)
+            item = _Queued(cand, now, self._seq, ctx, event=info)
             if self._settings.llm_enabled and getattr(self._writer, "available", True):
                 item.task = asyncio.create_task(self._generate(cand, ctx))
                 item.task_started = now
@@ -231,6 +255,33 @@ class CommentaryDirector:
         self._trim_queue()
         if cands:
             self._wake.set()
+
+    # ------------------------------------------------------------------ event mode
+
+    def _current_event_info(self) -> EventCommentary | None:
+        if self._event_info is None:
+            return None
+        try:
+            return self._event_info()
+        except Exception:
+            log.exception("could not build the event commentary facts")
+            return None
+
+    def _sponsors_allowed(self) -> bool:
+        return self._clock() - self._last_sponsor_at >= self._sponsor_interval
+
+    def _llm_text_rejected(self, item: _Queued, text: str) -> bool:
+        """Event rules enforced on the LLM text: words to avoid and the sponsor rate limit."""
+        info = item.event
+        if info is None:
+            return False
+        if mentions_any(text, info.avoid_words):
+            log.info("LLM line uses a word to avoid, using template text")
+            return True
+        if mentions_any(text, info.sponsors) and not self._sponsors_allowed():
+            log.info("LLM line mentions a sponsor too soon, using template text")
+            return True
+        return False
 
     def audio_stream(self, line_id: str) -> AsyncIterator[bytes] | None:
         buf = self._audio.get(line_id)
@@ -409,6 +460,8 @@ class CommentaryDirector:
             return cand.text, "template"
         if not text:
             return cand.text, "template"
+        if text != cand.text and self._llm_text_rejected(item, text):
+            return cand.text, "template"
         return text, ("template" if text == cand.text else "llm")
 
     async def _start_audio(
@@ -517,6 +570,8 @@ class CommentaryDirector:
         )
         self._current = cur
         self._spoken.append(text)
+        if item.event is not None and mentions_any(text, item.event.sponsors):
+            self._last_sponsor_at = start
         if audio is not None and buf is not None:
             cur.tasks.append(audio[1])
             if use_local:

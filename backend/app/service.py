@@ -45,6 +45,7 @@ from pydantic import BaseModel
 
 from app.api.ws import WsHub, encode
 from app.avatars import AvatarStore
+from app.commentary.context import EventCommentary, build_event_commentary
 from app.commentary.director import CommentaryDirector
 from app.commentary.llm import AnthropicWriter, LineWriter, OpenAIWriter, TemplateWriter
 from app.commentary.stt import (
@@ -59,18 +60,27 @@ from app.config import AppConfig, TrackMode
 from app.race.engine import RaceEngine
 from app.race.models import (
     CarConfig,
+    ClassificationRow,
     CommentaryLine,
     Driver,
     DriverAssigned,
+    EventProgram,
     EventState,
+    FalseStart,
     LapCompleted,
     LayoutDraft,
     RaceConfig,
     RaceEvent,
     RaceFinished,
+    RaceMode,
     RacePhase,
     RaceStarted,
     RaceState,
+    SessionFinished,
+    SessionInfo,
+    SessionKind,
+    SessionResult,
+    SessionSpec,
     Settings,
     TrackLayout,
     TrackRecord,
@@ -297,6 +307,7 @@ class RaceController:
             budget=self.budget,
             on_line=self._on_line,
             on_stop=self._on_stop,
+            event_info=self._event_commentary,
         )
 
         # Event mode: drivers, assignments and "assign on next crossing".
@@ -318,6 +329,13 @@ class RaceController:
         self._sequence_seen = False
         self._reconnect_attempt = 0
         self._started = False
+
+        # Event mode (programs and sessions): the active program of `self._event_state`.
+        self._active_program: EventProgram | None = None
+        self._false_start_restarted = False  # the "restart" rule presses START once per start
+        self._restarting = False  # START re-pressed after a false start, no countdown seen yet
+        self._refresh_active_program()
+        self._apply_idle_config()
 
     # ------------------------------------------------------------------ construction
 
@@ -482,6 +500,7 @@ class RaceController:
         state = self.engine.state
         state.track_record = self.track_record.model_copy() if self.track_record else None
         state.layout = self.settings.track.layout
+        state.session = self._session_info()
         if self._layout is not None:
             positions = estimate_positions(state, self._layout, state.race_time_ms)
             for car in state.cars:
@@ -557,6 +576,15 @@ class RaceController:
                 self.hub.broadcast("event", record_event)
                 if self._announce_record(record_event):
                     await self.director.submit(record_event, state)
+        finished = [e for e in events if isinstance(e, RaceFinished)]
+        for finish_event in finished:
+            session_event = self._finish_session(finish_event)
+            if session_event is not None:
+                state = self.race_state()
+                self.hub.broadcast("event", session_event)
+                await self.director.submit(session_event, state)
+        if finished:
+            self._apply_idle_config()
         self._mark_dirty()
 
     def _load_record(self, layout: str) -> TrackRecordInfo | None:
@@ -679,10 +707,20 @@ class RaceController:
             # Physical START on the CU: the engine auto-prepared, record the race.
             log.info("race started from the Control Unit")
             self._new_race_in_store(self.engine.config)
+            self._false_start_restarted = False
+            self._restarting = False
         changed = bool(events) or after is not before
         if isinstance(msg, Status):
-            if after is RacePhase.STARTING and 2 <= msg.start <= 9:
-                self._sequence_seen = True
+            self._log_start_light(msg, before, after)
+            if after is RacePhase.STARTING:
+                if 2 <= msg.start <= 7:
+                    self._sequence_seen = True
+                    self._restarting = False
+                elif msg.start in (8, 9) and not self._restarting:
+                    # A false start: the CU aborted the sequence, never fall back to start_now.
+                    # After our own re-press the CU may still show 8/9 for a while: then the
+                    # watchdog must stay free to press START again.
+                    self._sequence_seen = True
             changed = changed or msg != self._last_status
             self._last_status = msg
         else:
@@ -691,6 +729,39 @@ class RaceController:
             await self._process_events(events)
         elif changed:
             self._mark_dirty()
+        if any(isinstance(e, FalseStart) and e.action == "restart" for e in events):
+            await self._restart_after_false_start()
+
+    def _log_start_light(self, msg: Status, before: RacePhase, after: RacePhase) -> None:
+        """Log the raw ``Status.start`` changes around a start (false start diagnosis)."""
+        previous = self._last_status.start if self._last_status is not None else None
+        if msg.start == previous:
+            return
+        if RacePhase.STARTING in (before, after) or msg.start >= 8:
+            log.info("CU start light %s -> %s (phase %s)", previous, msg.start, after.value)
+
+    async def _restart_after_false_start(self) -> None:
+        """The "restart" false start rule: press START again, once per start."""
+        track = self._track
+        if (
+            self._false_start_restarted
+            or track is None
+            or self.engine.phase is not RacePhase.STARTING
+        ):
+            return
+        self._false_start_restarted = True
+        await self._cancel_watchdog()
+        self._sequence_seen = False
+        self._restarting = True
+        log.info("false start: pressing START again to rerun the light sequence")
+        try:
+            await track.start()
+        except Exception as exc:
+            log.warning("restart press after a false start failed: %s", _describe(exc))
+            self._restarting = False
+            return
+        # Same watchdog as a normal start: a second press if the CU only armed (light 1).
+        self._watchdog = asyncio.create_task(self._start_watchdog(track), name="start-watchdog")
 
     async def _reconnect(self, track: TrackInterface, exc: BaseException) -> None:
         """Reconnect ``track`` with backoff; returns once connected. Cancel to abort."""
@@ -832,14 +903,20 @@ class RaceController:
 
     async def start_race(self, config: RaceConfig | None = None) -> RaceState:
         track = self._require_track()
-        config = config or self.settings.race
         if self.engine.phase in _ACTIVE:
             # Close the race in progress before starting a new one.
             await self._process_events(self.engine.stop())
+        # While an event runs, no body = the current session's spec (and always its rules).
+        current = self._current_session()
+        if config is None:
+            config = self._session_config(current[1]) if current else self.settings.race
+        self._apply_session_rules(current[1] if current else None)
         await self._cancel_watchdog()
         self.engine.prepare(config)
         self._new_race_in_store(config)
         self._sequence_seen = False
+        self._false_start_restarted = False
+        self._restarting = False
         self._mark_dirty()
         try:
             await track.start()
@@ -879,7 +956,8 @@ class RaceController:
                 log.warning("second start press failed: %s", _describe(exc))
         # 2) Still no countdown: start the race on the host clock.
         await asyncio.sleep(self._start_fallback_s - press_at)
-        if self.engine.phase is RacePhase.STARTING and not self._sequence_seen:
+        false_start = self._last_status is not None and self._last_status.start in (8, 9)
+        if self.engine.phase is RacePhase.STARTING and not self._sequence_seen and not false_start:
             log.warning(
                 "no start light sequence seen within %.1fs, starting the race now",
                 self._start_fallback_s,
@@ -905,6 +983,8 @@ class RaceController:
         self.engine.reset()
         self.engine.race_id = None
         self._sequence_seen = False
+        self._restarting = False
+        self._apply_idle_config()
         if self._track is not None and self.connection.status == "connected":
             try:
                 await self._track.reset_timer()
@@ -939,9 +1019,8 @@ class RaceController:
             self._record_layout = settings.track.layout
             self.track_record = self._load_record(self._record_layout)
         self.engine.update_cars(settings.cars)
-        if self.engine.phase not in _ACTIVE:
-            # Used when a race is started from the CU's own START button.
-            self.engine.config = settings.race
+        # Used when a race is started from the CU's own START button (event: session spec).
+        self._apply_idle_config()
         self.director.update_settings(settings.commentary)
         self._refresh_writer()
         if isinstance(self.tts, ElevenLabsTTS):
@@ -1284,3 +1363,206 @@ class RaceController:
         if not text:
             raise ControllerError(422, "No speech recognised", "transcription_failed")
         return {"text": text, "name_guess": guess_driver(text, self.store.list_drivers())}
+
+    # ------------------------------------------------------------------ event programs / sessions
+
+    def _refresh_active_program(self) -> None:
+        program_id = self.event_state.program_id
+        if program_id is None:
+            self._active_program = None
+            return
+        try:
+            self._active_program = self.store.get_program(program_id)
+        except Exception:
+            log.exception("could not load event program %r", program_id)
+            self._active_program = None
+
+    def _current_session(self) -> tuple[EventProgram, SessionSpec, int] | None:
+        """(program, session spec, index) of the running event, None when no event is active."""
+        program = self._active_program
+        if self.event_state.program_id is None or program is None or not program.sessions:
+            return None
+        index = max(0, min(self.event_state.current_index, len(program.sessions) - 1))
+        return program, program.sessions[index], index
+
+    def _session_info(self) -> SessionInfo | None:
+        current = self._current_session()
+        if current is None:
+            return None
+        program, spec, index = current
+        return SessionInfo(
+            program_id=program.id,
+            program_name=program.name,
+            session_id=spec.id,
+            kind=spec.kind,
+            name=spec.name,
+            index=index,
+            total=len(program.sessions),
+        )
+
+    def _session_config(self, spec: SessionSpec) -> RaceConfig:
+        """The race config of a session: the user's race settings with the spec's format."""
+        mode = RaceMode.TIMED if spec.kind is SessionKind.QUALIFYING else spec.mode
+        return self.settings.race.model_copy(
+            update={"mode": mode, "target_laps": spec.target_laps, "duration_s": spec.duration_s}
+        )
+
+    def _apply_session_rules(self, spec: SessionSpec | None) -> None:
+        if spec is None:
+            self.engine.set_session_rules()
+        else:
+            self.engine.set_session_rules(
+                qualifying=spec.kind is SessionKind.QUALIFYING, false_start=spec.false_start
+            )
+
+    def _apply_idle_config(self) -> None:
+        """Make the next race (also one started with the CU's START) run the current session.
+
+        The rules always apply from the next race on; the config only while no race is active.
+        """
+        current = self._current_session()
+        spec = current[1] if current is not None else None
+        self._apply_session_rules(spec)
+        if self.engine.phase not in _ACTIVE:
+            self.engine.config = self._session_config(spec) if spec else self.settings.race
+        self._mark_dirty()
+
+    def get_event(self) -> EventState:
+        return self.event_state.model_copy(deep=True)
+
+    def _require_no_race(self, action: str) -> None:
+        if self.engine.phase in _ACTIVE:
+            raise ControllerError(409, f"Cannot {action} while a race is in progress", "busy")
+
+    def start_event(self, program_id: str) -> EventState:
+        self._require_no_race("start an event")
+        program = self.store.get_program(program_id)
+        if program is None or not program.sessions:
+            raise ControllerError(
+                422, f"Program {program_id!r} not found or empty", "invalid_request"
+            )
+
+        def start(state: EventState) -> None:
+            state.program_id = program.id
+            state.current_index = 0
+            state.results = []
+
+        self._update_event_state(start)
+        self._active_program = program
+        self._apply_idle_config()
+        return self.get_event()
+
+    def next_session(self) -> EventState:
+        self._require_no_race("change session")
+        current = self._current_session()
+        if current is None:
+            raise ControllerError(409, "No event is running", "invalid_request")
+        program, _spec, index = current
+        if index + 1 >= len(program.sessions):
+            raise ControllerError(409, "This is the last session of the event", "invalid_request")
+
+        def advance(state: EventState) -> None:
+            state.current_index = index + 1
+
+        self._update_event_state(advance)
+        self._apply_idle_config()
+        return self.get_event()
+
+    def stop_event(self) -> EventState:
+        """End the event (results are kept until the next start). A running race goes on."""
+
+        def stop(state: EventState) -> None:
+            state.program_id = None
+            state.current_index = 0
+
+        self._update_event_state(stop)
+        self._active_program = None
+        self._apply_idle_config()
+        return self.get_event()
+
+    def list_programs(self) -> list[EventProgram]:
+        return self.store.list_programs()
+
+    def save_program(self, program: EventProgram) -> EventProgram:
+        saved = self.store.save_program(program)
+        if saved.id == self.event_state.program_id:
+            self._active_program = saved
+            self._apply_idle_config()
+        return saved
+
+    def delete_program(self, program_id: str) -> list[EventProgram]:
+        """Delete a program (no error if unknown); deleting the running one stops the event."""
+        if program_id == self.event_state.program_id:
+            self.stop_event()
+        self.store.delete_program(program_id)
+        return self.store.list_programs()
+
+    def _classification(self, state: RaceState) -> list[ClassificationRow]:
+        """Final classification from the engine order (penalties / qualifying included)."""
+        placed = sorted(
+            (c for c in state.cars if c.position is not None), key=lambda c: c.position or 0
+        )
+        return [
+            ClassificationRow(
+                position=car.position or 0,
+                address=car.address,
+                driver_id=car.driver_id,
+                name=car.driver_name or self._holder_name(car.address),
+                laps=car.laps,
+                best_lap_ms=car.best_lap_ms,
+                total_time_ms=(
+                    car.total_time_ms + car.penalty_ms if car.total_time_ms is not None else None
+                ),
+                penalty_ms=car.penalty_ms,
+            )
+            for car in placed
+        ]
+
+    def _finish_session(self, event: RaceFinished) -> SessionFinished | None:
+        """Store (or replace) the result of the current session; None when there is none."""
+        current = self._current_session()
+        if current is None:
+            return None
+        _program, spec, _index = current
+        rows = self._classification(self.race_state())
+        if not rows:
+            return None  # nobody crossed the line: nothing to classify
+        result = SessionResult(
+            session_id=spec.id, kind=spec.kind, race_id=self.engine.race_id, classification=rows
+        )
+
+        def store_result(state: EventState) -> None:
+            for i, old in enumerate(state.results):
+                if old.session_id == spec.id:
+                    state.results[i] = result  # a re-run replaces the result
+                    return
+            state.results.append(result)
+
+        self._update_event_state(store_result)  # kept in memory even if saving fails
+        return SessionFinished(
+            session_id=spec.id,
+            kind=spec.kind,
+            order=[row.address for row in rows],
+            race_time_ms=event.race_time_ms,
+        )
+
+    def _event_commentary(self) -> EventCommentary | None:
+        """The ``event`` facts block for the AI commentator (None when no event is active)."""
+        current = self._current_session()
+        if current is None:
+            return None
+        program, spec, index = current
+        roster = self._driver_map()
+        drivers: dict[int, Driver] = {}
+        for address, driver_id in self.event_state.assignments.items():
+            driver = roster.get(driver_id)
+            if driver is not None:
+                drivers[int(address)] = driver
+        grid: dict[int, tuple[int, str]] = {}
+        if spec.grid_from is not None:
+            source = next(
+                (r for r in self.event_state.results if r.session_id == spec.grid_from), None
+            )
+            if source is not None:
+                grid = {row.address: (row.position, row.name) for row in source.classification}
+        return build_event_commentary(program, spec, index, drivers, grid, self.cars_by_address())

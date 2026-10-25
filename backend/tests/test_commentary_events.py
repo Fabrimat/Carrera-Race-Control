@@ -42,7 +42,7 @@ def test_both_languages_cover_same_keys_with_3_to_5_variants():
 
 def test_placeholders_are_known_fields():
     known = {"name", "lap_time", "lap", "position", "passed", "fuel", "winner", "second"}
-    known |= {"previous_time", "holder", "sector", "car"}
+    known |= {"previous_time", "holder", "sector", "car", "penalty", "session"}
     for module in LANGUAGES.values():
         for variants in module.TEMPLATES.values():
             for v in variants:

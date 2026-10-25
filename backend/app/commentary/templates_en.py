@@ -95,6 +95,51 @@ TEMPLATES: dict[str, list[str]] = {
         "All quiet on the track, engines are waiting.",
         "Nobody on track, who wants a race?",
     ],
+    # ---- event mode: false start (by action; with / without the car) and session end
+    "false_start_warn": [
+        "False start! {name} jumped the lights!",
+        "{name} moved too early, that is a false start!",
+        "Too eager, {name}! False start!",
+    ],
+    "false_start_anon": [
+        "False start! Somebody jumped the lights!",
+        "Too early! The start is aborted!",
+        "A false start, everybody back on the line!",
+    ],
+    "false_start_penalty": [
+        "False start by {name}: a {penalty} penalty!",
+        "{name} jumped the lights and gets {penalty} added!",
+        "Costly mistake for {name}: false start, {penalty} penalty!",
+    ],
+    "false_start_restart": [
+        "False start by {name}! We go again!",
+        "{name} jumped the lights, the start will be repeated!",
+        "Too early, {name}! Back to the line, new start!",
+    ],
+    "false_start_restart_anon": [
+        "False start! The start will be repeated!",
+        "Too early! Back to the line, we go again!",
+        "Start aborted, the lights come on again!",
+    ],
+    "session_finished": [
+        "{session} is over: {winner} wins it!",
+        "Chequered flag! {winner} wins, {second} is second!",
+        "Session complete, the win goes to {winner}!",
+        "That's it! {winner} takes the victory!",
+    ],
+    "practice_finished": [
+        "{session} is over, {winner} tops the timesheet!",
+        "End of practice: {winner} is on top!",
+        "Practice complete, {winner} leads the way!",
+    ],
+    "qualifying_finished": [
+        "Qualifying is over: pole position for {winner}!",
+        "{winner} takes pole! {second} will start alongside!",
+        "Pole position goes to {winner}!",
+        "{session} is over, {winner} is on pole!",
+    ],
 }
 
-STATIC_FIELDS = frozenset({"name", "winner", "second", "passed", "holder", "sector", "car"})
+STATIC_FIELDS = frozenset(
+    {"name", "winner", "second", "passed", "holder", "sector", "car", "session"}
+)
