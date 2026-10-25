@@ -81,6 +81,21 @@ scrolling (1920×1080, 1366×768). Later it should become fully responsive:
 Panel priorities and breakpoints should be defined once and shared by the dashboard
 and TV mode.
 
+## 6. Keyboard shortcuts
+
+Everything should be operable quickly from the keyboard, without the mouse:
+- Race: start (two-press CU sequence handled), stop, reset, pace car, mode cycling,
+  laps/duration +/- (e.g. Space, Esc, R, P, M, +/-).
+- Connection: connect/disconnect, scan.
+- Commentary: mute, volume +/-, effects on/off, LLM on/off, repeat last line.
+- Views: dashboard, history, settings, track editor, TV mode / open TV window on the
+  second monitor (desktop app), fullscreen.
+- Cars: quick rename via the leaderboard (F2 already works), jump between cars.
+- A `?` overlay listing all shortcuts in the UI language (en/it).
+- Shortcuts customisable and saved in settings, conflict detection, and no triggering
+  while typing in inputs. In the desktop app, optional global shortcuts that work when
+  the window isn't focused.
+
 ## Also noted
 
 - Check Lane hardware: sector support is being built now and is tested on the simulator
