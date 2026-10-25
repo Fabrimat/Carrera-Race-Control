@@ -25,10 +25,12 @@ export function RaceControls({ compact = false }: { compact?: boolean }) {
   const [override, setOverride] = useState<Partial<RaceConfig>>({})
   const [busy, setBusy] = useState(false)
   const active = race.phase === 'starting' || race.phase === 'running' || race.phase === 'paused'
+  // While an event runs, the backend already holds the current session's spec as the race
+  // config (also used by a START pressed on the CU): show it read-only, start without a body.
+  const session = race.session ?? null
   // While a race is live, show the config it actually runs with.
-  const cfg: RaceConfig = active
-    ? race.config
-    : { ...race.config, ...defaults, ...override }
+  const cfg: RaceConfig =
+    active || session ? race.config : { ...race.config, ...defaults, ...override }
   const racing = race.phase === 'running' || race.phase === 'paused'
 
   const run = async (fn: () => Promise<unknown>) => {
@@ -47,55 +49,88 @@ export function RaceControls({ compact = false }: { compact?: boolean }) {
       className={`rounded-lg border border-line bg-panel ${compact ? 'flex flex-wrap items-end gap-3 p-2' : 'p-4'}`}
       aria-label={t('controls.title')}
     >
-      <div className={`flex flex-wrap items-end gap-4 ${compact ? '' : 'mb-3'}`}>
-        <label className="flex flex-col gap-1 text-xs uppercase tracking-widest text-dim">
-          {t('controls.mode')}
-          <select
-            className={field}
-            value={cfg.mode}
-            disabled={active}
-            onChange={(e) => setOverride((o) => ({ ...o, mode: e.target.value as RaceMode }))}
-          >
-            {MODES.map((m) => (
-              <option key={m} value={m}>
-                {t(`mode.${m}`)}
-              </option>
-            ))}
-          </select>
-        </label>
-        {cfg.mode === 'laps' && (
+      {session ? (
+        <dl
+          className={`flex flex-wrap items-end gap-4 ${compact ? '' : 'mb-3'}`}
+          aria-label={t('ev.runner')}
+          data-testid="session-spec"
+        >
+          <div className="flex flex-col gap-1">
+            <dt className="text-xs uppercase tracking-widest text-dim">{t('ev.runner')}</dt>
+            <dd className={`${field} border-transparent`}>
+              {session.name || t(`ev.kind.${session.kind}`)}
+            </dd>
+          </div>
+          <div className="flex flex-col gap-1">
+            <dt className="text-xs uppercase tracking-widest text-dim">{t('controls.mode')}</dt>
+            <dd className={`${field} border-transparent`}>{t(`mode.${cfg.mode}`)}</dd>
+          </div>
+          {cfg.mode === 'laps' && (
+            <div className="flex flex-col gap-1">
+              <dt className="text-xs uppercase tracking-widest text-dim">{t('controls.laps')}</dt>
+              <dd className={`${field} border-transparent`}>{cfg.target_laps}</dd>
+            </div>
+          )}
+          {cfg.mode === 'timed' && (
+            <div className="flex flex-col gap-1">
+              <dt className="text-xs uppercase tracking-widest text-dim">
+                {t('controls.duration')}
+              </dt>
+              <dd className={`${field} border-transparent`}>{cfg.duration_s}</dd>
+            </div>
+          )}
+        </dl>
+      ) : (
+        <div className={`flex flex-wrap items-end gap-4 ${compact ? '' : 'mb-3'}`}>
           <label className="flex flex-col gap-1 text-xs uppercase tracking-widest text-dim">
-            {t('controls.laps')}
-            <input
-              className={`${field} w-24`}
-              type="number"
-              min={1}
-              max={999}
-              value={cfg.target_laps}
+            {t('controls.mode')}
+            <select
+              className={field}
+              value={cfg.mode}
               disabled={active}
-              onChange={(e) => numInput('target_laps', e.target.value)}
-            />
+              onChange={(e) => setOverride((o) => ({ ...o, mode: e.target.value as RaceMode }))}
+            >
+              {MODES.map((m) => (
+                <option key={m} value={m}>
+                  {t(`mode.${m}`)}
+                </option>
+              ))}
+            </select>
           </label>
-        )}
-        {cfg.mode === 'timed' && (
-          <label className="flex flex-col gap-1 text-xs uppercase tracking-widest text-dim">
-            {t('controls.duration')}
-            <input
-              className={`${field} w-28`}
-              type="number"
-              min={10}
-              value={cfg.duration_s}
-              disabled={active}
-              onChange={(e) => numInput('duration_s', e.target.value)}
-            />
-          </label>
-        )}
-      </div>
+          {cfg.mode === 'laps' && (
+            <label className="flex flex-col gap-1 text-xs uppercase tracking-widest text-dim">
+              {t('controls.laps')}
+              <input
+                className={`${field} w-24`}
+                type="number"
+                min={1}
+                max={999}
+                value={cfg.target_laps}
+                disabled={active}
+                onChange={(e) => numInput('target_laps', e.target.value)}
+              />
+            </label>
+          )}
+          {cfg.mode === 'timed' && (
+            <label className="flex flex-col gap-1 text-xs uppercase tracking-widest text-dim">
+              {t('controls.duration')}
+              <input
+                className={`${field} w-28`}
+                type="number"
+                min={10}
+                value={cfg.duration_s}
+                disabled={active}
+                onChange={(e) => numInput('duration_s', e.target.value)}
+              />
+            </label>
+          )}
+        </div>
+      )}
       <div className="flex flex-wrap gap-3">
         <button
           className={`${btn} bg-go text-black`}
           disabled={active || busy}
-          onClick={() => void run(() => api.startRace(cfg))}
+          onClick={() => void run(() => (session ? api.startRace() : api.startRace(cfg)))}
         >
           {t('controls.start')}
         </button>
