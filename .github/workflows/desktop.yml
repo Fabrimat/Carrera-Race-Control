@@ -97,7 +97,7 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
         run: npm run dist
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: Carrera-Race-Control-Setup-${{ matrix.arch }}
           path: desktop/release/Carrera-Race-Control-Setup-*-${{ matrix.arch }}.exe
