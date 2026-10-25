@@ -77,7 +77,7 @@ describe('geometry', () => {
     expect(approach(0.5)).toBe(0.5)
     expect(approach(1.0)).toBeGreaterThan(0.95)
     expect(approach(1.0)).toBeLessThan(approach(1.3))
-    expect(approach(50)).toBeLessThan(0.99)
+    expect(approach(50)).toBeLessThanOrEqual(0.99) // limit, never the sensor itself
   })
 
   it('eases across the start/finish line by the shortest way', () => {
