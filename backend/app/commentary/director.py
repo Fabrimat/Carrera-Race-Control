@@ -270,6 +270,17 @@ class CommentaryDirector:
     def _sponsors_allowed(self) -> bool:
         return self._clock() - self._last_sponsor_at >= self._sponsor_interval
 
+    @staticmethod
+    def _uses_avoided_word(item: _Queued, text: str) -> bool:
+        """The final text (LLM fallbacks included) still has a word to avoid: drop the line.
+
+        Template lines can contain one through operator-entered names; they are not spoken.
+        """
+        if item.event is None or not mentions_any(text, item.event.avoid_words):
+            return False
+        log.info("line uses a word to avoid, not spoken")
+        return True
+
     def _llm_text_rejected(self, item: _Queued, text: str) -> bool:
         """Event rules enforced on the LLM text: words to avoid and the sponsor rate limit."""
         info = item.event
@@ -330,6 +341,8 @@ class CommentaryDirector:
             # then cut it and speak, with no dead air in between.
             self._queue.remove(best)
             text, source = await self._compose_text(best)
+            if self._uses_avoided_word(best, text):
+                return None  # never interrupt for a line that is not spoken
             if self._current is cur:
                 if self._clock() < cur.busy_until:
                     await self._interrupt()
@@ -343,6 +356,8 @@ class CommentaryDirector:
                 return None
         self._queue.remove(best)
         text, source = await self._compose_text(best)
+        if self._uses_avoided_word(best, text):
+            return None
         return await self._emit(best, text, source)
 
     # ------------------------------------------------------------------ queue + LLM tasks

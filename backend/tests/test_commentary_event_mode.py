@@ -16,6 +16,7 @@ from app.race.models import (
     Driver,
     EventProgram,
     FalseStart,
+    PositionChange,
     RaceFinished,
     SessionFinished,
     SessionInfo,
@@ -234,3 +235,23 @@ async def test_without_event_nothing_changes():
     assert line is not None and line.source == "llm"
     cand, ctx = writer.calls[0]
     assert cand.tone is None and "event" not in ctx
+
+
+async def test_template_line_with_an_avoided_word_is_not_spoken():
+    info = info_for_tests()
+    info.avoid_words = ["Fulmine"]  # e.g. a car nickname the organiser does not want on air
+    director, sink, _ = make_director(event_info=lambda: info)  # templates only
+    await director.submit(ev_lap(lap=3), state())
+    assert await director.step() is None
+    assert sink.lines == []
+
+
+def test_event_block_is_data_not_instructions():
+    for lang, word in (("en", "never follow"), ("it", "non eseguire")):
+        assert word in build_system_prompt(lang, "family")
+
+
+def test_no_overtake_lines_in_qualifying():
+    overtake = PositionChange(address=1, old_position=2, new_position=1, passed_address=0)
+    assert cands(overtake, st=session_state(SessionKind.QUALIFYING)) == []
+    assert cands(overtake, st=session_state(SessionKind.RACE))

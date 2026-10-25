@@ -155,6 +155,73 @@ async def test_restart_rule_presses_start_again_only_once(tmp_path: Path) -> Non
     assert [(e.address, e.action) for e in false_starts] == [(1, "restart"), (None, "restart")]
 
 
+async def _false_start_restart(ctl: RaceController, track: FakeTrack) -> None:
+    """Start the event race, jump the start: the restart rule presses START (2nd press)."""
+    await ctl.connect("simulator", None, persist=False)
+    start(ctl, program(race(false_start=FalseStartRule(action="restart"))))
+    await ctl.start_race()
+    track.idle_status = status(2)
+    await wait_for(lambda: ctl._last_status is not None and ctl._last_status.start == 2)
+    track.idle_status = status(8)
+    await wait_for(lambda: track.starts == 2)
+
+
+async def test_restart_never_falls_back_to_the_host_clock(tmp_path: Path) -> None:
+    track = FakeTrack()
+    # A plain start would fall back to start_now after 0.1 s without lights.
+    ctl = make_controller(
+        tmp_path, track, second_press_s=0.05, start_fallback_s=0.1, restart_wait_s=0.5
+    )
+
+    async def body() -> None:
+        await _false_start_restart(ctl, track)
+        track.idle_status = status(0)  # the CU drops to 0 after the restart press
+        await asyncio.sleep(0.8)  # past the fallback and the restart wait
+        assert ctl.engine.phase is RacePhase.STARTING
+        assert track.starts == 2
+
+    await running(ctl, body)
+    assert "race_started" not in event_types(ctl)
+
+
+async def test_restart_waits_for_the_cu_to_rearm_then_presses_once(tmp_path: Path) -> None:
+    track = FakeTrack()
+    ctl = make_controller(
+        tmp_path, track, second_press_s=0.2, start_fallback_s=0.1, restart_wait_s=10
+    )
+
+    async def body() -> None:
+        await _false_start_restart(ctl, track)
+        await asyncio.sleep(4.0)  # the CU holds the false start lights for 4 s
+        assert track.starts == 2
+        track.idle_status = status(1)  # then it arms
+        await wait_for(lambda: track.starts == 3)
+        await asyncio.sleep(0.6)
+        assert track.starts == 3  # exactly one more press
+        assert ctl.engine.phase is RacePhase.STARTING
+        track.idle_status = status(2)
+        await wait_for(lambda: ctl._last_status is not None and ctl._last_status.start == 2)
+        track.idle_status = status(7)
+        await wait_for(lambda: ctl.engine.phase is RacePhase.RUNNING)
+
+    await running(ctl, body)
+
+
+async def test_get_event_clears_an_expired_arming(tmp_path: Path) -> None:
+    from datetime import timedelta
+
+    store = RaceStore(":memory:")
+    store.save_driver(Driver(id="anna", name="Anna"))
+    ctl = make_controller(tmp_path, FakeTrack(), store=store)
+    ctl.arm("anna")
+    assert ctl.get_event().armed_driver_id == "anna"
+    now = ctl._wall_clock()
+    ctl._wall_clock = lambda: now + timedelta(seconds=61)
+    state = ctl.get_event()
+    assert state.armed_driver_id is None and state.armed_until is None
+    assert store.load_event_state().armed_driver_id is None
+
+
 async def test_restart_is_rearmed_by_a_new_start(tmp_path: Path) -> None:
     track = FakeTrack()
     ctl = make_controller(tmp_path, track, second_press_s=10, start_fallback_s=10)

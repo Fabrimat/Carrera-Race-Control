@@ -170,7 +170,10 @@ def candidates(
         level = prio.HIGH if event.previous_ms is not None else prio.NORMAL
         specs.append(("track_record", level, fields, facts, event.address))
     elif isinstance(event, PositionChange):
-        if event.new_position < event.old_position:
+        # In qualifying the order comes from best laps, nobody passes anybody on track: the
+        # best_lap line already tells the story.
+        qualifying = state.session is not None and state.session.kind is SessionKind.QUALIFYING
+        if event.new_position < event.old_position and not qualifying:
             fields = {
                 "name": name(event.address),
                 "position": speech.say_position(event.new_position, lang),

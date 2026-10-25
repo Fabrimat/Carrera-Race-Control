@@ -107,6 +107,10 @@ TICK_INTERVAL_S = 0.1
 START_FALLBACK_S = 5.0
 # A real CU needs two START presses (arm, then countdown): press again if still armed.
 START_SECOND_PRESS_S = 2.5
+# After a false start "restart" press: how long to wait for the CU to re-arm, and how often
+# to look at its lights.
+RESTART_WAIT_S = 30.0
+RESTART_POLL_S = 0.05
 CLOSE_TIMEOUT_S = 5.0
 COMMENTARY_HISTORY = 50
 ARM_TIMEOUT_S = 60  # "assign on next crossing" stays armed this long
@@ -258,6 +262,7 @@ class RaceController:
         backoff: Sequence[float] = DEFAULT_BACKOFF,
         start_fallback_s: float = START_FALLBACK_S,
         second_press_s: float = START_SECOND_PRESS_S,
+        restart_wait_s: float = RESTART_WAIT_S,
         state_interval: float = STATE_INTERVAL_S,
         tick_interval: float = TICK_INTERVAL_S,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
@@ -269,6 +274,7 @@ class RaceController:
         self._backoff = tuple(backoff) or DEFAULT_BACKOFF
         self._start_fallback_s = start_fallback_s
         self._second_press_s = second_press_s
+        self._restart_wait_s = restart_wait_s
         self._state_interval = state_interval
         self._tick_interval = tick_interval
         self._sleep = sleep
@@ -762,8 +768,35 @@ class RaceController:
             log.warning("restart press after a false start failed: %s", _describe(exc))
             self._restarting = False
             return
-        # Same watchdog as a normal start: a second press if the CU only armed (light 1).
-        self._watchdog = asyncio.create_task(self._start_watchdog(track), name="start-watchdog")
+        self._watchdog = asyncio.create_task(self._restart_watchdog(track), name="restart-watchdog")
+
+    async def _restart_watchdog(self, track: TrackInterface) -> None:
+        """After the restart press: press START once more if the CU only arms (light 1).
+
+        The CU may keep showing 8/9 for a while before it arms, so this waits (up to
+        ``restart_wait_s``) for light 1 to be shown for ``second_press_s`` and then presses
+        exactly once. It never starts the race on the host clock: without a light sequence
+        the race simply stays STARTING (the user can press START on the CU).
+        """
+        deadline = time.monotonic() + self._restart_wait_s
+        armed_since: float | None = None
+        while time.monotonic() < deadline:
+            await asyncio.sleep(RESTART_POLL_S)
+            if self.engine.phase is not RacePhase.STARTING or self._sequence_seen:
+                return  # the countdown is running (or the race was stopped)
+            now = time.monotonic()
+            if self._last_status is not None and self._last_status.start == 1:
+                armed_since = armed_since if armed_since is not None else now
+                if now - armed_since >= self._second_press_s:
+                    log.info("the CU is armed (light 1) after the restart, pressing START again")
+                    try:
+                        await track.start()
+                    except Exception as exc:
+                        log.warning("second start press failed: %s", _describe(exc))
+                    return
+            else:
+                armed_since = None
+        log.warning("no new light sequence after the false start restart: press START on the CU")
 
     async def _reconnect(self, track: TrackInterface, exc: BaseException) -> None:
         """Reconnect ``track`` with backoff; returns once connected. Cancel to abort."""
@@ -959,7 +992,12 @@ class RaceController:
         # 2) Still no countdown: start the race on the host clock.
         await asyncio.sleep(self._start_fallback_s - press_at)
         false_start = self._last_status is not None and self._last_status.start in (8, 9)
-        if self.engine.phase is RacePhase.STARTING and not self._sequence_seen and not false_start:
+        if (
+            self.engine.phase is RacePhase.STARTING
+            and not self._sequence_seen
+            and not false_start
+            and not self._restarting  # a false start restart never falls back to the host clock
+        ):
             log.warning(
                 "no start light sequence seen within %.1fs, starting the race now",
                 self._start_fallback_s,
@@ -1462,6 +1500,7 @@ class RaceController:
         self._mark_dirty()
 
     def get_event(self) -> EventState:
+        self._armed_driver_id()  # clears (and persists) an expired arming first
         return self.event_state.model_copy(deep=True)
 
     def _require_no_race(self, action: str) -> None:
