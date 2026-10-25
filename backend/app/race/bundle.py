@@ -8,6 +8,7 @@ before anything is written. API keys are not part of any section and photos are 
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Callable
 from typing import Any, Literal
 
@@ -15,11 +16,11 @@ from app.avatars import ID_RE, AvatarStore
 from app.race.models import (
     EventProgram,
     ExportBundle,
-    RaceMode,
     Settings,
     TrackLayout,
     TrackRecordInfo,
 )
+from app.race.programs import normalise_program, program_errors
 from app.race.store import RaceStore
 
 BUNDLE_VERSION = 1
@@ -49,24 +50,8 @@ def build_bundle(store: RaceStore, sections: list[str], app_version: str) -> Exp
     return bundle
 
 
-def program_errors(program: EventProgram) -> list[str]:
-    """Same rules as a program saved through its own endpoint."""
-    errors: list[str] = []
-    if not program.sessions:
-        errors.append(f"Program {program.id!r}: at least one session is required")
-    ids = [s.id for s in program.sessions]
-    if len(set(ids)) != len(ids):
-        errors.append(f"Program {program.id!r}: session ids must be unique")
-    for index, session in enumerate(program.sessions):
-        if session.grid_from is not None and session.grid_from not in ids[:index]:
-            errors.append(
-                f"Program {program.id!r}: session {session.id!r} grid_from must be earlier"
-            )
-    return errors
-
-
 def _duplicates(values: list[str]) -> list[str]:
-    return sorted({v for v in values if values.count(v) > 1})
+    return sorted(v for v, n in Counter(values).items() if n > 1)
 
 
 def bundle_errors(
@@ -92,15 +77,15 @@ def bundle_errors(
         ]
     if bundle.programs is not None:
         errors += [
-            f"programs: invalid id {p.id!r} (lowercase letters, digits and dashes)"
+            f"programs: invalid id {p.id!r} (1..40 characters)"
             for p in bundle.programs
-            if not ID_RE.match(p.id)
+            if not 1 <= len(p.id) <= 40
         ]
         errors += [
             f"programs: duplicate id {i!r}" for i in _duplicates([p.id for p in bundle.programs])
         ]
         for program in bundle.programs:
-            errors += [f"programs: {e}" for e in program_errors(program)]
+            errors += [f"programs: {program.id!r}: {e}" for e in program_errors(program)]
     if bundle.layouts is not None:
         errors += [
             f"layouts: duplicate name {n!r}" for n in _duplicates([x.name for x in bundle.layouts])
@@ -171,12 +156,8 @@ def _import_programs(
     existing = {p.id for p in store.list_programs()}
     added = updated = 0
     for program in incoming:
-        sessions = [
-            s.model_copy(update={"mode": RaceMode.TIMED}) if s.kind == "qualifying" else s
-            for s in program.sessions
-        ]
         added, updated = (added, updated + 1) if program.id in existing else (added + 1, updated)
-        store.save_program(program.model_copy(update={"sessions": sessions}))
+        store.save_program(normalise_program(program))
     removed = 0
     if mode == "replace":
         for program_id in existing - {p.id for p in incoming}:

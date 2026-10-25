@@ -250,7 +250,7 @@ def test_invalid_content_is_reported(make_client) -> None:
             "version": 1,
             "drivers": [{"id": "a", "name": "A"}, {"id": "a", "name": "B"}],
         },
-        {"format": "carrera-rms", "version": 1, "programs": [{**program_body("Bad_Id")}]},
+        {"format": "carrera-rms", "version": 1, "programs": [{**program_body("x" * 41)}]},
         {
             "format": "carrera-rms",
             "version": 1,
@@ -466,3 +466,43 @@ def test_import_body_limit_is_5_mb_and_only_for_import(make_client) -> None:
         headers={"content-type": "application/json"},
     )
     assert r.status_code == 413
+
+
+def test_replace_deletes_photos_of_removed_drivers_but_dry_run_keeps_them(make_client) -> None:
+    import base64
+
+    client = make_client()
+    ctl = ctl_of(client)
+    ctl.create_driver("Anna", None, "")
+    ctl.create_driver("Bruno", None, "")
+    client.put(
+        "/api/drivers/bruno/photo",
+        json={"image_base64": base64.b64encode(PNG).decode(), "media_type": "image/png"},
+    )
+    bundle = {"format": "carrera-rms", "version": 1, "drivers": [{"id": "anna", "name": "Anna"}]}
+    do_import(client, bundle, "replace", dry_run=True)
+    assert ctl.avatars.get("bruno") is not None
+    do_import(client, bundle, "replace")
+    assert ctl.avatars.get("bruno") is None
+
+
+def test_replace_that_removes_the_running_program_stops_the_event(make_client) -> None:
+    client = make_client()
+    program = {
+        "id": "cup",
+        "name": "Cup",
+        "sessions": [{"id": "r1", "kind": "race", "name": "Race", "mode": "laps"}],
+    }
+    assert client.put("/api/programs/cup", json=program).status_code == 200
+    assert client.post("/api/event/start", json={"program_id": "cup"}).status_code == 200
+    other = {**program, "id": "other", "name": "Other"}
+    bundle = {"format": "carrera-rms", "version": 1, "programs": [other]}
+    assert do_import(client, bundle, "replace").status_code == 200
+    assert client.get("/api/event").json()["program_id"] is None
+
+
+def test_duplicate_detection_is_linear() -> None:
+    from app.race.bundle import _duplicates
+
+    values = [str(i) for i in range(200_000)] + ["7"]
+    assert _duplicates(values) == ["7"]

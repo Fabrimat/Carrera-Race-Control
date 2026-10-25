@@ -1139,6 +1139,14 @@ class RaceController:
                     state.armed_until = None
 
             self._update_event_state(drop)
+            for driver_id in removed_driver_ids:
+                self.avatars.delete(driver_id)  # their photos go with them
+        # A replace import may have removed or changed the running program.
+        self._refresh_active_program()
+        if self._event_state.program_id is not None and self._active_program is None:
+            self.stop_event()
+        else:
+            self._apply_idle_config()
         self._mark_dirty()
 
     # ------------------------------------------------------------------ event mode: drivers

@@ -8,7 +8,8 @@ from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 
 from app.api.routes import controller
-from app.race.models import EventProgram, EventState, RaceMode, SessionKind
+from app.race.models import EventProgram, EventState
+from app.race.programs import normalise_program, program_errors
 from app.service import ControllerError
 
 router = APIRouter()
@@ -16,32 +17,6 @@ router = APIRouter()
 
 class StartEventRequest(BaseModel):
     program_id: Annotated[str, Field(min_length=1, max_length=40)]
-
-
-def normalise_program(program: EventProgram) -> EventProgram:
-    """Qualifying sessions always run as ``timed`` (ranked by best lap within the duration)."""
-    sessions = [
-        s.model_copy(update={"mode": RaceMode.TIMED}) if s.kind is SessionKind.QUALIFYING else s
-        for s in program.sessions
-    ]
-    return program.model_copy(update={"sessions": sessions})
-
-
-def program_errors(program: EventProgram) -> list[str]:
-    """API-level checks on top of the model (models.py is the wire contract, kept as is)."""
-    errors: list[str] = []
-    if not program.sessions:
-        errors.append("A program needs at least one session")
-    seen: list[str] = []
-    for session in program.sessions:
-        if session.id in seen:
-            errors.append(f"Duplicate session id {session.id!r}")
-        if session.grid_from is not None and session.grid_from not in seen:
-            errors.append(
-                f"Session {session.id!r}: grid_from must name an earlier session of the program"
-            )
-        seen.append(session.id)
-    return errors
 
 
 @router.get("/api/programs")
