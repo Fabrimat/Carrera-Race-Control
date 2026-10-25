@@ -32,6 +32,28 @@ Design notes
   ``RaceFinished`` fires when every car that has crossed the line is finished, or after a grace
   time of 1.25x the slowest personal best lap (``max_lap_ms`` if none) has passed.
   PRACTICE never finishes by itself.
+* **Sectors (Check Lanes).** ``Timer.sector`` 2/3 are Check Lane crossings (1 = start/finish).
+  Sector numbering is stable for the whole race and never shifts: the sensors are kept in a
+  driving ``order``. With a declared layout (:meth:`RaceEngine.set_declared_sensors`) the order
+  is the declared one (plus any extra sensor number seen, appended by number). Without it the
+  slots are fixed by sensor NUMBER: ``order = [2, 3][:max sensor seen - 1]``, so if sensor 3
+  shows up before 2 was ever seen the order is already [2, 3] and sector 2 simply stays None.
+  Sector ``i`` (1-based) ends at ``order[i-1]``; the last sector (``len(order) + 1``) ends at the
+  line, so ``num_sectors = 1 + len(order)``. Splits come from CU timestamps; the line-to-first-
+  sensor split starts at the lap reference ``last_ts``. A missed sensor leaves ``None`` entries,
+  never an invented value. Sensor crossings never touch ``last_ts`` (lap reference), are ignored
+  for cars awaiting a CU re-anchor, and ``SectorCompleted.lap_number`` is the lap in progress.
+  When the sector order changes (declared layout changed or a new sensor number appears) the
+  data of every stretch whose start/end sensors changed is dropped (others are kept).
+  Without Check Lanes ``num_sectors`` is 1: ``last_sectors`` / ``best_sectors`` hold the lap
+  time / best lap, ``current_sectors`` is ``[None]`` and no ``SectorCompleted`` is emitted.
+  Overall-best flags follow the BestLap rule: ``overall_best`` only when an existing race best
+  of that sector is beaten (the very first split of a sector is silent); ``personal_best`` only
+  when an existing personal best is beaten without being an overall best.
+* **Segment learning.** Per car, ``segment_estimates["a>b"]`` (sensors in driving order, line =
+  1, the last one wrapping to the line; with no Check Lanes just ``"1>1"``, the full lap) is an
+  EWMA (alpha 0.3) of valid segment times, seeded by the first one. Segments longer than 1.8x
+  the current estimate (crash) and segments that included a pit stop are not learned.
 """
 
 from __future__ import annotations
@@ -45,6 +67,7 @@ from app.race.models import (
     BestLapRecord,
     CarConfig,
     CarState,
+    Crossing,
     Idle,
     Lap,
     LapCompleted,
@@ -59,6 +82,7 @@ from app.race.models import (
     RacePhase,
     RaceStarted,
     RaceState,
+    SectorCompleted,
     default_cars,
 )
 from app.track.base import (
@@ -75,6 +99,10 @@ _HALF_MODULO = TIMESTAMP_MODULO // 2
 
 # Consecutive Status frames (~180 ms each on the real CU) needed to confirm a pit change.
 PIT_CONFIRM_FRAMES = 2
+# Same car triggering the same Check Lane again within this window is a double trigger.
+SENSOR_DEBOUNCE_MS = 300
+SEGMENT_ALPHA = 0.3
+SEGMENT_OUTLIER_FACTOR = 1.8
 
 
 @dataclass
@@ -96,6 +124,16 @@ class _Car:
     pit_stops: int = 0
     low_fuel_armed: bool = True
     finished: bool = False
+    # sectors
+    marks: dict[int, int] = field(default_factory=dict)  # sensor -> CU ts, current lap
+    sensor_ts: dict[int, int] = field(default_factory=dict)  # sensor -> last accepted CU ts
+    cur: dict[int, int | None] = field(default_factory=dict)  # closing sensor -> split
+    last: dict[int, int | None] = field(default_factory=dict)
+    best_sec: dict[int, int] = field(default_factory=dict)
+    seg_est: dict[str, int] = field(default_factory=dict)
+    line_ok: bool = True  # last_ts is this lap's start (False after a missed line crossing)
+    seg_pit: bool = False  # the segment in progress included a pit stop
+    last_crossing: Crossing | None = None
 
     @property
     def crossed(self) -> bool:
@@ -117,6 +155,7 @@ class RaceEngine:
         # Light level (1..6) that was showing when the race was stopped / reset: a CU that keeps
         # reporting it has not been pressed again, so it must not auto-prepare a new race.
         self._stale_light: int | None = None
+        self._declared: list[int] = []
         self._reset_runtime()
 
     # ------------------------------------------------------------------ lifecycle
@@ -140,6 +179,59 @@ class RaceEngine:
         self._idle_emitted = False
         self._finishing = False
         self._finish_started_ms = 0
+        self._seen_sensors: set[int] = set()
+        self._best_sec: dict[int, int] = {}  # closing sensor -> overall best split
+        self._order: list[int] = []
+        self._rebuild_order()
+
+    # ------------------------------------------------------------------ sectors setup
+
+    def set_declared_sensors(self, sensors: list[int]) -> None:
+        """Declare the Check Lane sensors of the layout in DRIVING order (e.g. ``[2, 3]``).
+
+        Values other than 2/3 and duplicates are dropped. An empty list means "undeclared":
+        the order is then fixed by sensor number as sensors are seen. Safe to call at any
+        time; if the resulting sector order changes, data of the redefined stretches is
+        dropped (see module docstring).
+        """
+        seen: list[int] = []
+        for sensor in sensors:
+            if sensor in (2, 3) and sensor not in seen:
+                seen.append(sensor)
+        self._declared = seen
+        self._rebuild_order()
+
+    def _rebuild_order(self) -> None:
+        top = max(self._seen_sensors, default=1)
+        order = list(self._declared)
+        order += [n for n in range(2, top + 1) if n not in order]
+        if order != self._order:
+            old = self._stretches(self._order)
+            self._order = order
+            self._drop_redefined(old, self._stretches(order))
+
+    @staticmethod
+    def _stretches(order: list[int]) -> dict[int, int]:
+        """Sector closing sensor -> sensor it starts from (the line is 1)."""
+        return dict(zip([*order, 1], [1, *order], strict=True))
+
+    def _drop_redefined(self, old: dict[int, int], new: dict[int, int]) -> None:
+        """Forget sector data and segment estimates of stretches whose endpoints changed.
+
+        Stretches that still run between the same two sensors keep their data, so discovering
+        sensor 3 does not wipe what was learned for line -> sensor 2.
+        """
+        stale = {k for k, start in old.items() if new.get(k) != start}
+        stale_segments = {f"{start}>{k}" for k, start in old.items() if k in stale}
+        for key in stale:
+            self._best_sec.pop(key, None)
+        for car in self._cars.values():
+            for key in stale:
+                car.cur.pop(key, None)
+                car.last.pop(key, None)
+                car.best_sec.pop(key, None)
+            for seg in stale_segments:
+                car.seg_est.pop(seg, None)
 
     def prepare(self, config: RaceConfig) -> None:
         """Arm a new race (phase STARTING) and clear all race data."""
@@ -325,7 +417,22 @@ class RaceEngine:
             pit_lane=self._pit_lane,
             cars=cars,
             best_lap=self._best.model_copy() if self._best else None,
+            num_sectors=self._num_sectors,
+            best_sectors=self._overall_best_sectors(),
         )
+
+    @property
+    def _num_sectors(self) -> int:
+        return 1 + len(self._order)
+
+    def _sector_keys(self) -> list[int]:
+        """Closing sensor of each sector in order; the last sector closes at the line (1)."""
+        return [*self._order, 1]
+
+    def _overall_best_sectors(self) -> list[int | None]:
+        if not self._order:
+            return [self._best.lap_ms if self._best else None]
+        return [self._best_sec.get(k) for k in self._sector_keys()]
 
     def _car_state(
         self,
@@ -337,6 +444,15 @@ class RaceEngine:
     ) -> CarState:
         name, color = self._name_color(car.address)
         avg = round(car.valid_sum / car.valid_count) if car.valid_count else None
+        keys = self._sector_keys()
+        if self._order:
+            current = [car.cur.get(k) for k in keys]
+            last = [car.last.get(k) for k in keys]
+            best = [car.best_sec.get(k) for k in keys]
+        else:
+            current = [None]
+            last = [car.last_lap_ms]
+            best = [car.best_lap_ms]
         return CarState(
             address=car.address,
             name=name,
@@ -355,6 +471,11 @@ class RaceEngine:
             pit_stops=car.pit_stops,
             finished=car.finished,
             lap_times=list(car.lap_times),
+            current_sectors=current,
+            last_sectors=last,
+            best_sectors=best,
+            last_crossing=car.last_crossing.model_copy() if car.last_crossing else None,
+            segment_estimates=dict(car.seg_est),
         )
 
     # ------------------------------------------------------------------ input
@@ -435,6 +556,7 @@ class RaceEngine:
             if in_pit:
                 car.in_pit = True
                 car.pit_entered_ms = changed_ms
+                car.seg_pit = True
                 car.pit_stops += 1
                 if emit:
                     events.append(PitEntry(address=address, race_time_ms=self._race_ms))
@@ -457,7 +579,7 @@ class RaceEngine:
         if not self._emitting():
             return []
         race_t = self._race_time_for(msg.timestamp)  # anchors the clock on the first Timer
-        if msg.sector != 1:
+        if msg.sector not in (1, 2, 3):
             return []
         address = msg.address
         if address not in self._configs and address > 5:
@@ -467,6 +589,8 @@ class RaceEngine:
             car = self._cars[address] = _Car(address)
         if car.finished:
             return []
+        if msg.sector != 1:
+            return self._on_sensor(car, msg.sector, msg.timestamp, race_t)
 
         old_order = self._standings()
         old_positions = {c.address: i + 1 for i, c in enumerate(old_order)}
@@ -474,10 +598,12 @@ class RaceEngine:
         if car.last_ts is None:  # start pass: not a lap
             car.last_ts = msg.timestamp
             car.total_time_ms = race_t
+            self._new_lap_marks(car, race_t)
             return []
         if address in self._resync:  # first crossing after a CU restart: new reference
             self._resync.discard(address)
             car.last_ts = msg.timestamp
+            self._new_lap_marks(car, race_t)
             return []
 
         lap_ms = ts_diff(msg.timestamp, car.last_ts)
@@ -486,6 +612,7 @@ class RaceEngine:
 
         events: list[RaceEvent] = []
         valid = lap_ms <= self.config.max_lap_ms
+        sector_events = self._close_lap(car, msg.timestamp, lap_ms, valid, race_t)
         car.last_ts = msg.timestamp
         car.total_time_ms = race_t
         car.laps += 1
@@ -533,6 +660,7 @@ class RaceEngine:
 
         new_order = self._standings()
         new_positions = {c.address: i + 1 for i, c in enumerate(new_order)}
+        events.extend(sector_events)
         events.append(
             LapCompleted(
                 address=address,
@@ -564,6 +692,135 @@ class RaceEngine:
             )
 
         events.extend(self._update_finishing(car, race_t))
+        return events
+
+    # ---- sectors
+
+    def _new_lap_marks(self, car: _Car, race_t: int) -> None:
+        """A line crossing that starts a fresh lap without closing one (start pass / re-anchor)."""
+        car.marks.clear()
+        car.cur.clear()
+        car.sensor_ts.clear()  # a re-anchored CU clock makes old sensor timestamps meaningless
+        car.line_ok = True
+        car.seg_pit = car.in_pit
+        car.last_crossing = Crossing(sensor=1, race_time_ms=race_t)
+
+    def _record_sector(self, car: _Car, key: int, split: int) -> tuple[bool, bool]:
+        """Update personal/overall bests; returns (personal_best, overall_best) flags."""
+        previous = car.best_sec.get(key)
+        overall_prev = self._best_sec.get(key)
+        is_overall = overall_prev is None or split < overall_prev
+        if previous is None or split < previous:
+            car.best_sec[key] = split
+        if is_overall:
+            self._best_sec[key] = split
+        overall_flag = is_overall and overall_prev is not None
+        personal_flag = not is_overall and previous is not None and split < previous
+        return personal_flag, overall_flag
+
+    def _learn_segment(self, car: _Car, a: int, b: int, duration: int, tainted: bool) -> None:
+        """EWMA of valid segment times; ignores outliers and segments with a pit stop."""
+        if tainted or duration <= 0:
+            return
+        key = f"{a}>{b}"
+        estimate = car.seg_est.get(key)
+        if estimate is None:
+            car.seg_est[key] = duration
+        elif duration <= SEGMENT_OUTLIER_FACTOR * estimate:
+            car.seg_est[key] = round(SEGMENT_ALPHA * duration + (1 - SEGMENT_ALPHA) * estimate)
+
+    def _on_sensor(self, car: _Car, sensor: int, ts: int, race_t: int) -> list[RaceEvent]:
+        """A Check Lane crossing (sensor 2 or 3)."""
+        if not car.crossed or car.address in self._resync:
+            return []
+        previous_same = car.sensor_ts.get(sensor)
+        if previous_same is not None and ts_diff(ts, previous_same) < SENSOR_DEBOUNCE_MS:
+            return []  # double trigger
+        if sensor not in self._seen_sensors:
+            self._seen_sensors.add(sensor)
+            self._rebuild_order()
+        if sensor not in self._order:  # cannot happen: the order covers every seen number
+            return []
+        index = self._order.index(sensor)
+        prev_sensor = self._order[index - 1] if index > 0 else 1
+        if sensor in car.marks:  # the line crossing of this lap was missed
+            car.marks.clear()
+            car.cur.clear()
+            car.line_ok = False
+        if prev_sensor == 1:
+            prev_ts = car.last_ts if car.line_ok else None
+        else:
+            prev_ts = car.marks.get(prev_sensor)
+        split: int | None = None
+        if prev_ts is not None:
+            split = ts_diff(ts, prev_ts)
+            if split > self.config.max_lap_ms:
+                return []  # impossible split
+        tainted = car.seg_pit or car.in_pit
+        car.sensor_ts[sensor] = ts
+        car.marks[sensor] = ts
+        car.cur[sensor] = split
+        car.last_crossing = Crossing(sensor=sensor, race_time_ms=race_t)
+        car.seg_pit = car.in_pit
+        if split is None:
+            return []
+        self._learn_segment(car, prev_sensor, sensor, split, tainted)
+        personal, overall = self._record_sector(car, sensor, split)
+        return [
+            SectorCompleted(
+                address=car.address,
+                lap_number=car.laps + 1,
+                sector=index + 1,
+                split_ms=split,
+                personal_best=personal,
+                overall_best=overall,
+                race_time_ms=race_t,
+            )
+        ]
+
+    def _close_lap(
+        self, car: _Car, ts: int, lap_ms: int, valid: bool, race_t: int
+    ) -> list[RaceEvent]:
+        """Line crossing that completes a lap: closes the last sector and rolls the lap data.
+
+        Called before ``car.laps`` is incremented and before ``last_ts`` moves.
+        """
+        events: list[RaceEvent] = []
+        tainted = car.seg_pit or car.in_pit
+        if not self._order:
+            if valid:
+                self._learn_segment(car, 1, 1, lap_ms, tainted)
+        else:
+            last_sensor = self._order[-1]
+            split: int | None = None
+            mark = car.marks.get(last_sensor)
+            if mark is not None:
+                split = ts_diff(ts, mark)
+                if split > self.config.max_lap_ms:
+                    split = None
+            car.cur[1] = split
+            if split is not None:
+                personal = overall = False
+                if valid:
+                    self._learn_segment(car, last_sensor, 1, split, tainted)
+                    personal, overall = self._record_sector(car, 1, split)
+                events.append(
+                    SectorCompleted(
+                        address=car.address,
+                        lap_number=car.laps + 1,  # not yet incremented: the lap just closed
+                        sector=len(self._order) + 1,
+                        split_ms=split,
+                        personal_best=personal,
+                        overall_best=overall,
+                        race_time_ms=race_t,
+                    )
+                )
+        car.last = dict(car.cur)
+        car.cur.clear()
+        car.marks.clear()
+        car.line_ok = True
+        car.seg_pit = car.in_pit
+        car.last_crossing = Crossing(sensor=1, race_time_ms=race_t)
         return events
 
     # ---- finishing

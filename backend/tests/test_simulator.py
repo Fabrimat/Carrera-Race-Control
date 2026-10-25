@@ -254,3 +254,67 @@ async def test_three_lap_race_through_engine_is_fast(seed):
     assert state.cars[0].laps == 3 and state.cars[0].finished
     completed = [e for e in events if isinstance(e, LapCompleted)]
     assert len(completed) == len(laps)
+
+
+# ---------------------------------------------------------------- Check Lanes
+
+
+def test_check_lanes_validation():
+    with pytest.raises(ValueError):
+        SimulatorTrack(check_lanes=[0.2, 0.5, 0.8])
+    with pytest.raises(ValueError):
+        SimulatorTrack(check_lanes=[1.2])
+    with pytest.raises(ValueError):
+        SimulatorTrack(check_lanes=[0.0])
+
+
+def test_check_lanes_default_keeps_old_stream():
+    plain = take(SimulatorTrack(num_cars=3, seed=5), 40_000)
+    explicit = take(SimulatorTrack(num_cars=3, seed=5, check_lanes=[]), 40_000)
+    assert plain == explicit
+    assert {m.sector for _, m in plain if isinstance(m, Timer)} == {1}
+
+
+def test_check_lanes_emit_sensors_at_the_right_fractions():
+    track = SimulatorTrack(
+        num_cars=2, seed=3, double_trigger_rate=0, fuel=False, check_lanes=[0.33, 0.66]
+    )
+    per_car: dict[int, list[tuple[float, int]]] = {0: [], 1: []}
+    for t, m in take(track, 90_000):
+        if isinstance(m, Timer):
+            per_car[m.address].append((t, m.sector))
+    for events in per_car.values():
+        sectors = [s for _, s in events]
+        assert set(sectors) == {1, 2, 3}
+        # strictly 1, 2, 3, 1, 2, 3 ... after the start pass (first line crossing)
+        assert sectors[:7] == [1, 2, 3, 1, 2, 3, 1]
+        lines = [t for t, s in events if s == 1]
+        lap = lines[1] - lines[0]
+        at2 = next(t for t, s in events if s == 2 and t > lines[0])
+        at3 = next(t for t, s in events if s == 3 and t > lines[0])
+        assert abs((at2 - lines[0]) / lap - 0.33) < 0.05
+        assert abs((at3 - lines[0]) / lap - 0.66) < 0.05
+
+
+def test_check_lanes_are_reproducible_and_feed_the_engine():
+    def run():
+        track = SimulatorTrack(
+            num_cars=3, seed=11, double_trigger_rate=0.05, check_lanes=[0.33, 0.66]
+        )
+        engine = RaceEngine(default_cars(), RaceConfig(mode=RaceMode.PRACTICE), clock=lambda: 0.0)
+        engine.prepare(RaceConfig(mode=RaceMode.PRACTICE))
+        msgs = []
+        for _, m in take(track, 80_000):
+            msgs.append(m)
+            engine.handle(m)
+        return msgs, engine
+
+    first, engine = run()
+    second, _ = run()
+    assert first == second
+    assert engine.state.num_sectors == 3
+    for c in engine.state.cars:
+        if c.laps >= 2:
+            assert all(s is not None for s in c.last_sectors)
+            assert sum(c.last_sectors) == c.last_lap_ms
+            assert set(c.segment_estimates) == {"1>2", "2>3", "3>1"}

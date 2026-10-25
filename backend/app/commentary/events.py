@@ -34,6 +34,7 @@ from app.race.models import (
     RaceMode,
     RaceStarted,
     RaceState,
+    SectorCompleted,
     TrackRecord,
     Verbosity,
 )
@@ -188,6 +189,8 @@ def candidates(
         specs.append(("idle", prio.LOW, {}, {"idle_seconds": event.seconds}, None))
     elif isinstance(event, LapCompleted):
         specs.extend(_lap_specs(event, state, verbosity, lang, name))
+    elif isinstance(event, SectorCompleted):
+        specs.extend(_sector_specs(event, state, verbosity, lang, name))
 
     result: list[Candidate] = []
     for key, level, fields, facts, address in specs:
@@ -232,6 +235,35 @@ def _lap_specs(
         return []
     if verbosity == Verbosity.HIGH and event.lap_number % 2 == 0:
         return [("lap_completed", prio.LOW, fields, facts, event.address)]
+    return []
+
+
+def _sector_specs(
+    event: SectorCompleted,
+    state: RaceState,
+    verbosity: Verbosity,
+    lang: str,
+    name: Callable[[int], str],
+) -> list[_Spec]:
+    """Only a purple (overall best) sector is news; HIGH also speaks the leader's personal bests."""
+    if event.sector < 1 or state.num_sectors < 2:
+        return []
+    fields = {"name": name(event.address), "sector": speech.say_number(event.sector, lang)}
+    facts = {
+        "driver": name(event.address),
+        "sector": event.sector,
+        "split_ms": event.split_ms,
+        "lap": event.lap_number,
+    }
+    prio = CommentaryPriority
+    if event.overall_best:
+        return [("sector_best", prio.NORMAL, fields, {**facts, "overall": True}, event.address)]
+    if event.personal_best and verbosity == Verbosity.HIGH:
+        car = _car_state(state, event.address)
+        if car is not None and car.position == 1:
+            return [
+                ("sector_personal", prio.LOW, fields, {**facts, "overall": False}, event.address)
+            ]
     return []
 
 

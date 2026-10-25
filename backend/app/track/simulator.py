@@ -57,8 +57,11 @@ class SimulatedCU:
         fuel: bool,
         pit_lane: bool,
         clock_offset_ms: int,
+        check_lanes: list[float] | None = None,
     ) -> None:
         self.rng = rng
+        # Fractions of the lap where Check Lane sensors 2, 3 sit (index 0 -> sensor 2).
+        self.check_lanes = list(check_lanes or [])
         self.double_trigger_rate = double_trigger_rate
         self.fuel = fuel
         self.pit_lane = pit_lane
@@ -190,7 +193,13 @@ class SimulatedCU:
                 car.in_pit = True
                 extra = self.rng.uniform(3000, 5000)
                 self._push_car_event(t + extra, "pit_end", car.address)
-        self._push_car_event(t + self._lap_ms(car) + extra, "cross", car.address)
+        lap = self._lap_ms(car)
+        for index, fraction in enumerate(self.check_lanes):
+            # Per-passage jitter of about 1 % of the lap keeps the splits realistic.
+            jitter = min(1.03, max(0.97, self.rng.gauss(1.0, 0.01)))
+            at = t + extra + lap * min(fraction * jitter, 0.99)
+            self._push_car_event(at, f"sensor{index + 2}", car.address)
+        self._push_car_event(t + lap + extra, "cross", car.address)
 
     def advance(self, now: float) -> list[tuple[float, PollResult]]:
         """Process every event due at or before ``now``; returns (time, message) in order."""
@@ -205,6 +214,8 @@ class SimulatedCU:
             elif kind == "cross":
                 out.append((t, Timer(address=arg, timestamp=self.cu_ts(t), sector=1)))
                 self._on_cross(t, self.cars[arg])
+            elif kind in ("sensor2", "sensor3"):
+                out.append((t, Timer(address=arg, timestamp=self.cu_ts(t), sector=int(kind[-1]))))
             elif kind == "double":
                 out.append((t, Timer(address=arg, timestamp=self.cu_ts(t), sector=1)))
             elif kind == "pit_end":
@@ -227,11 +238,15 @@ class SimulatorTrack:
         pit_lane: bool = True,
         clock_offset_ms: int | None = None,
         clock: Callable[[], float] = time.monotonic,
+        check_lanes: list[float] | None = None,
     ) -> None:
         if not 1 <= num_cars <= 6:
             raise ValueError("num_cars must be between 1 and 6")
         if time_scale <= 0:
             raise ValueError("time_scale must be > 0")
+        check_lanes = list(check_lanes or [])
+        if len(check_lanes) > 2 or not all(0 < f < 1 for f in check_lanes):
+            raise ValueError("check_lanes: at most two fractions, each strictly between 0 and 1")
         rng = random.Random(seed)
         if clock_offset_ms is None:
             clock_offset_ms = rng.randrange(TIMESTAMP_MODULO)
@@ -239,7 +254,7 @@ class SimulatorTrack:
         self._clock = clock
         self._t0: float | None = None
         self._core = SimulatedCU(
-            num_cars, rng, double_trigger_rate, fuel, pit_lane, clock_offset_ms
+            num_cars, rng, double_trigger_rate, fuel, pit_lane, clock_offset_ms, check_lanes
         )
         self._queue: deque[PollResult] = deque()
         self._next_status = 0.0

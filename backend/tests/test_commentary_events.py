@@ -42,7 +42,7 @@ def test_both_languages_cover_same_keys_with_3_to_5_variants():
 
 def test_placeholders_are_known_fields():
     known = {"name", "lap_time", "lap", "position", "passed", "fuel", "winner", "second"}
-    known |= {"previous_time", "holder"}
+    known |= {"previous_time", "holder", "sector"}
     for module in LANGUAGES.values():
         for variants in module.TEMPLATES.values():
             for v in variants:
@@ -171,3 +171,83 @@ def test_track_record_low_verbosity_keeps_beaten_but_not_first():
     first = TrackRecord(race_time_ms=1, address=0, lap_ms=5000, layout="x")
     assert cands(beaten, verbosity=Verbosity.LOW)
     assert cands(first, verbosity=Verbosity.LOW) == []
+
+
+# ---------------------------------------------------------------- sectors
+
+
+def _sector_state():
+    st = state()
+    st.num_sectors = 3
+    return st
+
+
+def _sector(address=0, overall=False, personal=False, sector=2):
+    from app.race.models import SectorCompleted
+
+    return SectorCompleted(
+        address=address,
+        lap_number=3,
+        sector=sector,
+        split_ms=2345,
+        overall_best=overall,
+        personal_best=personal,
+    )
+
+
+@pytest.mark.parametrize("lang", ["it", "en"])
+def test_overall_best_sector_is_normal_priority_and_names_driver_and_sector(lang):
+    result = cands(_sector(overall=True), lang=lang, st=_sector_state())
+    assert len(result) == 1
+    c = result[0]
+    assert c.priority == P.NORMAL and c.template_key == "sector_best"
+    assert "Fulmine" in c.text and ("due" if lang == "it" else "two") in c.text
+    assert c.facts["overall"] is True and c.facts["sector"] == 2
+    assert "{" not in c.text
+
+
+def test_sector_without_best_is_silent_and_needs_sectors():
+    assert cands(_sector(), st=_sector_state()) == []
+    assert cands(_sector(overall=True), st=state()) == []  # num_sectors == 1
+
+
+@pytest.mark.parametrize("lang", ["it", "en"])
+def test_low_verbosity_drops_sectors(lang):
+    assert cands(_sector(overall=True), Verbosity.LOW, lang, _sector_state()) == []
+
+
+def test_personal_sector_only_for_leader_at_high_verbosity():
+    pb = _sector(address=0, personal=True)
+    assert cands(pb, Verbosity.NORMAL, st=_sector_state()) == []
+    high = cands(pb, Verbosity.HIGH, st=_sector_state())
+    assert len(high) == 1 and high[0].priority == P.LOW
+    assert cands(_sector(address=1, personal=True), Verbosity.HIGH, st=_sector_state()) == []
+
+
+def test_context_has_sector_facts():
+    from app.commentary.context import build_context, summarise_event
+    from app.race.models import CarConfig, CarState, RaceState
+
+    st = RaceState(num_sectors=3, best_sectors=[2000, None, 2500])
+    st.cars = [
+        CarState(
+            address=1,
+            name="Blu",
+            color="#00f",
+            position=1,
+            current_sectors=[2100, None, None],
+            last_sectors=[2000, 2200, 2500],
+        )
+    ]
+    cars = {1: CarConfig(address=1, name="Blu")}
+    ctx = build_context(st, cars, "en", 1, "sector_best", [])
+    assert set(ctx["involved_car"]["current_lap_sectors"]) == {"1"}
+    assert set(ctx["involved_car"]["last_lap_sectors"]) == {"1", "2", "3"}
+    assert set(ctx["best_sectors_overall"]) == {"1", "3"} and ctx["num_sectors"] == 3
+    assert "2345" not in str(ctx)
+    summary = summarise_event(_sector(address=1, overall=True), cars, "en")
+    assert summary["sector"] == 2 and summary["overall_best"] is True and "split_time" in summary
+    # no Check Lanes: nothing sector-related in the prompt
+    plain = build_context(RaceState(cars=st.cars), cars, "en", 1, "lap_completed", [])
+    assert "best_sectors_overall" not in plain
+    assert "current_lap_sectors" not in plain["involved_car"]

@@ -693,7 +693,7 @@ def test_resync_clock_same_domain_after_long_drop_and_with_buffered_timer():
     engine.resync_clock()
     clock.advance(90)  # the link was down for 1.5 minutes, the clock kept extrapolating
     # The first Timer after reconnect is an old buffered crossing (car 1, sector 2).
-    assert cross(engine, 1, 50_000, sector=2) == []
+    assert of_type(cross(engine, 1, 50_000, sector=2), LapCompleted) == []  # a sector, no lap
     laps = of_type(cross(engine, 0, 97_000), LapCompleted)
     assert [(e.lap_ms, e.race_time_ms) for e in laps] == [(90_000, 96_000)]
     clock.advance(6)

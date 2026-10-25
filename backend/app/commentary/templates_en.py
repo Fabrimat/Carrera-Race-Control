@@ -37,6 +37,18 @@ TEMPLATES: dict[str, list[str]] = {
         "A best lap for {name}, {lap_time}.",
         "Personal best for {name}: {lap_time}.",
     ],
+    "sector_best": [
+        "{name} is purple in sector {sector}!",
+        "Fastest sector {sector} of the race so far: {name}!",
+        "{name} sets the best time in sector {sector}!",
+        "Nobody has been quicker through sector {sector} than {name}!",
+        "Purple sector {sector} for {name}!",
+    ],
+    "sector_personal": [
+        "{name} improves in sector {sector}.",
+        "A personal best for {name} in sector {sector}.",
+        "{name} is quicker through sector {sector}.",
+    ],
     "track_record": [
         "New track record! {name} laps in {lap_time}, beating {holder}'s {previous_time}!",
         "Track record broken! {name} stops the clock at {lap_time}, {holder} had {previous_time}.",
@@ -80,4 +92,4 @@ TEMPLATES: dict[str, list[str]] = {
     ],
 }
 
-STATIC_FIELDS = frozenset({"name", "winner", "second", "passed", "holder"})
+STATIC_FIELDS = frozenset({"name", "winner", "second", "passed", "holder", "sector"})

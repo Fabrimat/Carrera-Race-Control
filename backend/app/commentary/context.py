@@ -22,6 +22,7 @@ from app.race.models import (
     RaceMode,
     RaceStarted,
     RaceState,
+    SectorCompleted,
     TrackRecord,
 )
 
@@ -84,6 +85,10 @@ def summarise_event(event: RaceEvent, cars: dict[int, CarConfig], lang: str) -> 
         summary["overall"] = event.overall
     elif isinstance(event, TrackRecord):
         summary["lap_time"] = speech.say_lap_time(event.lap_ms, lang)
+    elif isinstance(event, SectorCompleted):
+        summary["sector"] = event.sector
+        summary["split_time"] = speech.say_lap_time(event.split_ms, lang)
+        summary["overall_best"] = event.overall_best
     elif isinstance(event, PositionChange):
         summary["new_position"] = event.new_position
         if event.passed_address is not None:
@@ -93,6 +98,11 @@ def summarise_event(event: RaceEvent, cars: dict[int, CarConfig], lang: str) -> 
     elif isinstance(event, RaceStarted):
         summary["mode"] = event.mode.value
     return summary
+
+
+def _spoken_sectors(values: list[int | None], lang: str) -> dict[str, str]:
+    """{"1": "spoken time", ...} for the sectors that have a value (missing ones are omitted)."""
+    return {str(i + 1): speech.say_lap_time(v, lang) for i, v in enumerate(values) if v is not None}
 
 
 def _car_summary(car: CarState, cars: dict[int, CarConfig], lang: str) -> dict[str, Any]:
@@ -152,6 +162,13 @@ def build_context(
                 car_info["fuel_state"] = fuel
             car_info["pit_stops"] = involved.pit_stops
             car_info["in_pit"] = involved.in_pit
+        if state.num_sectors > 1:
+            current = _spoken_sectors(involved.current_sectors, lang)
+            last = _spoken_sectors(involved.last_sectors, lang)
+            if current:
+                car_info["current_lap_sectors"] = current
+            if last:
+                car_info["last_lap_sectors"] = last
         ctx["involved_car"] = car_info
 
     if state.best_lap is not None:
@@ -159,6 +176,11 @@ def build_context(
             "driver": _name(state.best_lap.address, cars),
             "time": speech.say_lap_time(state.best_lap.lap_ms, lang),
         }
+    if state.num_sectors > 1:
+        best_sectors = _spoken_sectors(state.best_sectors, lang)
+        if best_sectors:
+            ctx["best_sectors_overall"] = best_sectors
+            ctx["num_sectors"] = state.num_sectors
     if state.track_record is not None:
         ctx["track_record"] = {
             "holder": state.track_record.holder_name,
