@@ -1,9 +1,10 @@
 import { useState, type ReactNode } from 'react'
+import { CarsSection } from '../components/CarsSection'
 import { useT } from '../i18n/useT'
-import { api } from '../lib/api'
 import { guarded } from '../lib/errors'
+import { saveSettings } from '../lib/settingsSave'
 import { useStore } from '../lib/store'
-import type { CarConfig, CommentarySettings, Language, Settings, Verbosity } from '../lib/types'
+import type { CommentarySettings, Language, Settings, Verbosity } from '../lib/types'
 
 const input = 'rounded-md border border-line bg-panel-2 px-3 py-2'
 const LANGS: Language[] = ['en', 'it']
@@ -30,27 +31,45 @@ function KeyBadge({ ok, label }: { ok: boolean; label: string }) {
   )
 }
 
+interface Draft {
+  ui_language?: Language
+  track?: Settings['track']
+  commentary?: Partial<CommentarySettings>
+}
+
 export function SettingsPage() {
   const t = useT()
   const loaded = useStore((s) => s.settings)
-  const [draft, setDraft] = useState<Settings | null>(null)
+  const [draft, setDraft] = useState<Draft | null>(null)
   const [saving, setSaving] = useState(false)
 
   if (!loaded) return <p className="p-6 text-dim">{t('common.loading')}</p>
-  const s: Settings = draft ?? loaded
+  // Cars are autosaved by CarsSection; the draft only covers the other sections.
+  const s: Settings = {
+    ...loaded,
+    ui_language: draft?.ui_language ?? loaded.ui_language,
+    track: draft?.track ?? loaded.track,
+    commentary: { ...loaded.commentary, ...draft?.commentary },
+  }
   const layoutOk = s.track.layout.trim().length >= 1 && s.track.layout.length <= 40
-  const edit = (patch: Partial<Settings>) => setDraft({ ...s, ...patch })
+  const edit = (patch: Draft) => setDraft({ ...draft, ...patch })
   const editCom = (patch: Partial<CommentarySettings>) =>
-    edit({ commentary: { ...s.commentary, ...patch } })
-  const editCar = (address: number, patch: Partial<CarConfig>) =>
-    edit({ cars: s.cars.map((c) => (c.address === address ? { ...c, ...patch } : c)) })
+    edit({ commentary: { ...draft?.commentary, ...patch } })
 
+  // Merge the draft into the freshest store settings so autosaved cars are never clobbered.
   const save = async () => {
+    if (!draft) return
     setSaving(true)
-    const res = await guarded(() => api.putSettings(s))
+    const res = await guarded(() =>
+      saveSettings((cur) => ({
+        ...cur,
+        ui_language: draft.ui_language ?? cur.ui_language,
+        track: draft.track ?? cur.track,
+        commentary: { ...cur.commentary, ...draft.commentary },
+      })),
+    )
     setSaving(false)
     if (res) {
-      useStore.getState().setSettings(res)
       useStore.getState().pushToast(t('settings.saved'), 'info')
       setDraft(null)
     }
@@ -72,34 +91,7 @@ export function SettingsPage() {
     <div className="mx-auto flex max-w-[1000px] flex-col gap-6 p-4">
       <h2 className="text-2xl font-black uppercase tracking-widest">{t('settings.title')}</h2>
 
-      <section className="rounded-lg border border-line bg-panel p-4">
-        <h3 className="mb-3 text-sm font-bold uppercase tracking-widest text-dim">{t('settings.cars')}</h3>
-        <div className="flex flex-col gap-2">
-          {s.cars.map((c) => (
-            <div key={c.address} className="grid grid-cols-[3rem_1fr_1fr_4rem] items-end gap-3" data-testid="car-row">
-              <span className="num pb-2 text-xl font-bold">{c.address + 1}</span>
-              <Field label={t('settings.car_name')}>
-                <input className={input} value={c.name} onChange={(e) => editCar(c.address, { name: e.target.value })} />
-              </Field>
-              <Field label={t('settings.car_nickname')}>
-                <input
-                  className={input}
-                  value={c.nickname ?? ''}
-                  onChange={(e) => editCar(c.address, { nickname: e.target.value || null })}
-                />
-              </Field>
-              <Field label={t('settings.car_color')}>
-                <input
-                  type="color"
-                  className="h-10 w-full rounded-md border border-line bg-panel-2"
-                  value={c.color}
-                  onChange={(e) => editCar(c.address, { color: e.target.value })}
-                />
-              </Field>
-            </div>
-          ))}
-        </div>
-      </section>
+      <CarsSection cars={loaded.cars} />
 
       <section className="rounded-lg border border-line bg-panel p-4">
         <h3 className="mb-3 text-sm font-bold uppercase tracking-widest text-dim">{t('settings.track')}</h3>

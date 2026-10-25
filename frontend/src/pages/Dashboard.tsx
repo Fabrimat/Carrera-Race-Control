@@ -33,7 +33,7 @@ export function Dashboard() {
         </section>
       )}
       <section className="rounded-lg border border-line bg-panel-2/40 p-3" aria-label={t('leaderboard.title')}>
-        <Leaderboard cars={race.cars} bestLap={race.best_lap} trackRecord={race.track_record} fuelMode={race.fuel_mode} />
+        <Leaderboard cars={race.cars} bestLap={race.best_lap} trackRecord={race.track_record} fuelMode={race.fuel_mode} editable />
       </section>
       <div className="grid gap-4 xl:grid-cols-[2fr_1fr]">
         <section className="rounded-lg border border-line bg-panel p-4">

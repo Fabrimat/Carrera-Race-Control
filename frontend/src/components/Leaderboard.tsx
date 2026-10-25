@@ -1,5 +1,8 @@
-import { useLayoutEffect, useRef } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import { useFormat, useT } from '../i18n/useT'
+import { guarded } from '../lib/errors'
+import { MAX_CAR_NAME, renameCar } from '../lib/settingsSave'
+import { useStore } from '../lib/store'
 import type { BestLapRecord, CarState, TrackRecordInfo } from '../lib/types'
 
 interface Props {
@@ -8,6 +11,8 @@ interface Props {
   trackRecord?: TrackRecordInfo | null
   fuelMode: boolean
   large?: boolean
+  /** Allow renaming cars inline (click, Enter or F2). Off in TV mode. */
+  editable?: boolean
 }
 
 export function sortCars(cars: CarState[]): CarState[] {
@@ -43,6 +48,69 @@ function useFlip(deps: string) {
   return ref
 }
 
+function CarName({ address, name, editable }: { address: number; name: string; editable: boolean }) {
+  const t = useT()
+  const nickname = useStore((s) => s.settings?.cars.find((c) => c.address === address)?.nickname ?? null)
+  const [editing, setEditing] = useState(false)
+  const [value, setValue] = useState(name)
+  const settled = useRef(false)
+  const valid = value.trim().length >= 1 && value.length <= MAX_CAR_NAME
+
+  const begin = () => {
+    settled.current = false
+    setValue(name)
+    setEditing(true)
+  }
+  const finish = (save: boolean) => {
+    if (settled.current) return
+    if (save && !valid) return
+    settled.current = true
+    setEditing(false)
+    if (save && value.trim() !== name) void guarded(() => renameCar(address, value.trim()))
+  }
+
+  const label = (
+    <>
+      <span className="truncate">{name}</span>
+      {nickname && <span className="truncate text-sm font-normal text-dim">{nickname}</span>}
+    </>
+  )
+  if (!editable) return label
+  if (editing) {
+    return (
+      <input
+        autoFocus
+        value={value}
+        maxLength={MAX_CAR_NAME}
+        aria-label={t('leaderboard.rename_input', { name })}
+        aria-invalid={!valid}
+        data-testid="rename-input"
+        className={`min-w-0 rounded border bg-panel-2 px-2 ${valid ? 'border-line' : 'border-signal'}`}
+        onChange={(e) => setValue(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') finish(true)
+          else if (e.key === 'Escape') finish(false)
+        }}
+        onBlur={() => finish(valid)}
+      />
+    )
+  }
+  return (
+    <button
+      type="button"
+      data-testid="rename-button"
+      aria-label={t('leaderboard.rename', { name })}
+      className="flex min-w-0 items-baseline gap-2 text-left hover:underline"
+      onClick={begin}
+      onKeyDown={(e) => {
+        if (e.key === 'F2') begin()
+      }}
+    >
+      {label}
+    </button>
+  )
+}
+
 function FuelBar({ fuel }: { fuel: number }) {
   const pct = Math.max(0, Math.min(15, fuel)) / 15
   const color = fuel <= 3 ? 'bg-signal' : fuel <= 7 ? 'bg-amber' : 'bg-go'
@@ -60,7 +128,7 @@ function FuelBar({ fuel }: { fuel: number }) {
   )
 }
 
-export function Leaderboard({ cars, bestLap, trackRecord = null, fuelMode, large = false }: Props) {
+export function Leaderboard({ cars, bestLap, trackRecord = null, fuelMode, large = false, editable = false }: Props) {
   const t = useT()
   const f = useFormat()
   const rows = sortCars(cars)
@@ -112,7 +180,7 @@ export function Leaderboard({ cars, bestLap, trackRecord = null, fuelMode, large
                   style={{ background: c.color }}
                   aria-hidden
                 />
-                <span className="truncate">{c.name}</span>
+                <CarName address={c.address} name={c.name} editable={editable} />
                 {c.in_pit && (
                   <span
                     data-testid="pit-badge"

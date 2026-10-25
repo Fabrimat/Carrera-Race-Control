@@ -1,5 +1,5 @@
 import { useT } from '../i18n/useT'
-import { api } from '../lib/api'
+import { saveSettings } from '../lib/settingsSave'
 import { guarded } from '../lib/errors'
 import { useStore } from '../lib/store'
 import type { Route } from '../lib/route'
@@ -22,8 +22,7 @@ export function LanguageSwitcher() {
       useStore.setState({ language: lang })
       return
     }
-    const res = await guarded(() => api.putSettings({ ...settings, ui_language: lang }))
-    if (res) useStore.getState().setSettings(res)
+    await guarded(() => saveSettings((s) => ({ ...s, ui_language: lang })))
   }
   return (
     <select

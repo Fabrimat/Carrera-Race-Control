@@ -1,5 +1,45 @@
-import type { CarState, RaceState } from '../lib/types'
+import { vi } from 'vitest'
+import type { CarState, RaceState, Settings, SettingsResponse } from '../lib/types'
 import { emptyRace } from '../lib/store'
+
+export function settingsResponse(over: Partial<SettingsResponse> = {}): SettingsResponse {
+  return {
+    ui_language: 'en',
+    cars: [
+      { address: 0, name: 'Car 1', color: '#e53935', nickname: null },
+      { address: 1, name: 'Car 2', color: '#1e88e5', nickname: null },
+    ],
+    commentary: {
+      enabled: true,
+      language: 'en',
+      voice_id: null,
+      verbosity: 'normal',
+      tts_enabled: false,
+      llm_enabled: false,
+      audio_output: 'browser',
+      session_char_budget: 1000,
+      monthly_char_budget: 10000,
+    },
+    track: { mode: 'simulator', address: null, layout: 'Default' },
+    race: emptyRace.config,
+    keys: { elevenlabs: false, anthropic: false },
+    ...over,
+  }
+}
+
+/** Fake backend for PUT /api/settings: records bodies and echoes them back (with keys). */
+export function fakeSettingsServer(initial: SettingsResponse, delayMs = 0) {
+  const puts: Settings[] = []
+  let server = initial
+  const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body)) as Settings
+    puts.push(body)
+    if (delayMs) await new Promise((r) => setTimeout(r, delayMs))
+    server = { ...body, keys: initial.keys }
+    return new Response(JSON.stringify(server), { status: 200 })
+  })
+  return { puts, fetchMock, current: () => server }
+}
 
 export function car(over: Partial<CarState> & { address: number }): CarState {
   return {
