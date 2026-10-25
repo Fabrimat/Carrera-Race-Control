@@ -17,6 +17,8 @@ Design notes
 * **Cars in the state.** Every configured car with address 0..5 (placed or not), plus any car
   that has crossed the line (e.g. a configured pace-car address 6/7 or an unconfigured one).
   Timers from addresses 6/7 are ignored unless that address is configured in ``cars``.
+  Fuel and pit data are only tracked once a car has crossed the line (the CU reports fuel 0
+  for empty slots), so ``fuel`` stays None and no LowFuel/Pit events fire for absent cars.
 * **BestLap events.** A new overall record emits one ``overall=True`` event (``previous_ms`` =
   the old record), even on a car's first valid lap; only the very first valid lap of the whole
   race is silent. Personal-best events (``overall=False``) are emitted only when a lap improves
@@ -337,7 +339,8 @@ class RaceEngine:
         threshold = self.config.low_fuel_threshold
         for address in range(min(len(msg.fuel), len(msg.pit))):
             car = self._cars.get(address)
-            if car is None:
+            if car is None or not car.crossed:
+                # Empty slots report fuel 0: ignore fuel/pit until the car has crossed the line.
                 continue
             if self._fuel_mode:
                 fuel = msg.fuel[address]

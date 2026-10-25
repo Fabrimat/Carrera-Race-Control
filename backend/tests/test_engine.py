@@ -348,6 +348,7 @@ def test_update_cars_renames():
 def test_pit_entry_exit_and_pit_stops():
     engine, clock = make()
     go(engine)
+    cross(engine, 0, 1000)  # start pass: fuel/pit tracked from here
     mode = MODE_FUEL | MODE_PIT_LANE
     pit = [True] + [False] * 7
     ev = engine.handle(status(0, pit=pit, mode=mode))
@@ -365,6 +366,7 @@ def test_pit_entry_exit_and_pit_stops():
 def test_low_fuel_once_and_rearmed():
     engine, _ = make(RaceConfig(low_fuel_threshold=3))
     go(engine)
+    cross(engine, 0, 1000)
     mode = MODE_FUEL
     assert engine.handle(status(0, fuel=[5] + [15] * 7, mode=mode)) == []
     ev = engine.handle(status(0, fuel=[3] + [15] * 7, mode=mode))
@@ -376,9 +378,29 @@ def test_low_fuel_once_and_rearmed():
     assert engine.state.cars[0].fuel == 1 and engine.state.fuel_mode
 
 
+def test_absent_cars_have_no_fuel_and_no_low_fuel():
+    engine, _ = make(RaceConfig(low_fuel_threshold=3))
+    go(engine)
+    cross(engine, 0, 1000)
+    mode = MODE_FUEL | MODE_PIT_LANE
+    # Slots 1..7 are empty: the CU reports fuel 0 (and could report pit) for them.
+    ev = engine.handle(status(0, fuel=[15] + [0] * 7, pit=[False] + [True] * 7, mode=mode))
+    assert ev == []
+    cars = {c.address: c for c in engine.state.cars}
+    assert cars[0].fuel == 15
+    for address in range(1, 6):
+        assert cars[address].fuel is None
+        assert not cars[address].in_pit and cars[address].pit_stops == 0
+    # Once the car shows up its fuel is tracked normally.
+    cross(engine, 1, 1500)
+    ev = engine.handle(status(0, fuel=[15, 2] + [0] * 6, mode=mode))
+    assert [e.address for e in of_type(ev, LowFuel)] == [1]
+
+
 def test_fuel_ignored_without_fuel_mode():
     engine, _ = make()
     go(engine)
+    cross(engine, 0, 1000)
     assert engine.handle(status(0, fuel=[0] * 8, mode=0)) == []
     assert engine.state.cars[0].fuel is None and not engine.state.fuel_mode
 
