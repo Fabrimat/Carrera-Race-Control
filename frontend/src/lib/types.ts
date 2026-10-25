@@ -50,6 +50,51 @@ export interface CarState {
   pit_stops: number
   finished: boolean
   lap_times: number[]
+  // Sector timing (Check Lanes), arrays of length RaceState.num_sectors.
+  current_sectors: (number | null)[]
+  last_sectors: (number | null)[]
+  best_sectors: (number | null)[]
+  last_crossing: Crossing | null
+  segment_estimates: Record<string, number> // key "a>b", sensors 1 (line), 2, 3
+  track_pos: TrackPosition | null
+}
+
+export interface Crossing {
+  sensor: number // 1 = start/finish, 2 and 3 = Check Lanes
+  race_time_ms: number
+}
+
+/** See backend/app/race/models.py TrackPosition and src/lib/geometry.ts estimateS. */
+export interface TrackPosition {
+  from_sensor: number
+  to_sensor: number
+  s_from: number
+  s_to: number
+  anchor_race_ms: number
+  expected_ms: number | null
+  in_pit: boolean
+  confidence: 'measured' | 'estimated' | 'stale'
+}
+
+export interface LayoutSensor {
+  sensor: number // 2 or 3
+  s: number // fraction of the lap from the start/finish line
+}
+
+/** points: closed centre line in driving order, normalised 0..1, points[0] = start/finish. */
+export interface TrackLayout {
+  name: string
+  points: [number, number][]
+  aspect: number // width / height
+  sensors: LayoutSensor[]
+  pit_s: number | null
+  source: 'drawn' | 'photo'
+  updated_at: string
+}
+
+export interface LayoutDraft {
+  layout: TrackLayout
+  notes: string
 }
 
 export interface BestLapRecord {
@@ -80,6 +125,9 @@ export interface RaceState {
   cars: CarState[]
   best_lap: BestLapRecord | null
   track_record: TrackRecordInfo | null
+  layout: string
+  num_sectors: number
+  best_sectors: (number | null)[]
 }
 
 // ------------------------------------------------------------------ events
@@ -130,6 +178,15 @@ export type RaceEvent =
       layout: string
       previous_ms: number | null
       previous_holder: string | null
+    })
+  | (EventBase & {
+      type: 'sector_completed'
+      address: number
+      lap_number: number
+      sector: number
+      split_ms: number
+      personal_best: boolean
+      overall_best: boolean
     })
 
 export interface CommentaryLine {

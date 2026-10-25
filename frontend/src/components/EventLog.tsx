@@ -46,6 +46,12 @@ export function describeEvent(
       return t('event.track_record', { name: name(e.address), layout: e.layout, time: lap(e.lap_ms) })
     case 'idle':
       return t('event.idle', { seconds: e.seconds })
+    case 'sector_completed':
+      return t('event.sector_completed', {
+        name: name(e.address),
+        sector: e.sector,
+        time: lap(e.split_ms),
+      })
   }
 }
 

@@ -137,6 +137,7 @@ export const it: Messages = {
   'event.race_finished_no_winner': 'Gara terminata',
   'event.idle': 'Pista ferma da {seconds} s',
   'event.track_record': '{name}: NUOVO RECORD DEL TRACCIATO su {layout}, {time}',
+  'event.sector_completed': '{name}: settore {sector} in {time}',
   'events.title': 'Registro eventi',
   'events.empty': 'Ancora nessun evento.',
 

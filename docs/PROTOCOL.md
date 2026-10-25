@@ -130,3 +130,41 @@ The client reconnects with backoff (1s, 2s, 4s, max 10s) and relies on the
 browser plays it (HTMLAudioElement routed through a Web Audio GainNode for
 volume) unless muted or audio output is set to `local`. Only one line plays at
 a time; `commentary_stop` stops it.
+
+## Sectors and track map
+
+### Sectors (Check Lane sensors)
+
+The CU reports Check Lane crossings as `Timer.sector` 2 or 3 (1 = start/finish).
+Sector *i* is the stretch that ends at the *i*-th sensor in driving order (with both
+Check Lanes: S1 line→2, S2 2→3, S3 3→line). `RaceState.num_sectors` = 1 + Check Lanes
+declared in the current layout or seen during the race. The engine emits a
+`sector_completed` event per finished sector (`personal_best` / `overall_best` flags);
+`CarState.current_sectors`, `last_sectors`, `best_sectors` and `RaceState.best_sectors`
+carry the splits. Without Check Lanes nothing changes (`num_sectors` = 1).
+
+### Live position estimate
+
+Every car has `last_crossing` (sensor + race time) and `segment_estimates` (learned
+expected ms per stretch, key `"a>b"`). When the current layout has a map, the backend
+also fills `CarState.track_pos` (see `TrackPosition` in models.py) and the browser
+animates the dot between `s_from` and `s_to` with its own clock, re-synchronised on
+every `state` message (`RaceState.race_time_ms` at send time). The dot never passes the
+next sensor before the CU reports it; `confidence: "stale"` (overdue by a wide margin)
+is shown dimmed. Cars in the pit are drawn at `pit_s`.
+
+### REST
+
+| Method | Path | Body | Response |
+|---|---|---|---|
+| GET | `/api/layouts` | – | `{"layouts": TrackLayout[]}` by name |
+| GET | `/api/layouts/{name}` | – | `TrackLayout` (404 `layout_not_found`) |
+| PUT | `/api/layouts/{name}` | `TrackLayout` (name must match) | `TrackLayout` (422 `settings_invalid` on bad geometry) |
+| DELETE | `/api/layouts/{name}` | – | `{"layouts": TrackLayout[]}` (404 `layout_not_found`) |
+| POST | `/api/layouts/from-photo` | `{"image_base64": str, "media_type": "image/jpeg"\|"image/png"\|"image/webp", "name": str, "language": "en"\|"it"}` | `LayoutDraft` (not saved) |
+
+`from-photo` sends the image to the Anthropic API (vision model, `ANTHROPIC_VISION_MODEL`),
+which returns the centre line in driving order. Errors: `llm_unavailable` (no key or
+disabled), `image_too_large` (> 8 MB decoded), `invalid_image`, `photo_unrecognised`
+(no closed track found). The UI warns that the photo is sent to Anthropic and always
+opens the draft in the editor for correction before saving.

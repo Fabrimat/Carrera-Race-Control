@@ -42,6 +42,9 @@ export const emptyRace: RaceState = {
   cars: [],
   best_lap: null,
   track_record: null,
+  layout: 'default',
+  num_sectors: 1,
+  best_sectors: [],
 }
 
 export const emptyConnection: ConnectionInfo = {

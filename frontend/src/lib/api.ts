@@ -9,6 +9,8 @@ import type {
   SettingsResponse,
   Snapshot,
   TrackMode,
+  TrackLayout,
+  LayoutDraft,
   TrackRecordInfo,
 } from './types'
 
@@ -76,4 +78,17 @@ export const api = {
   deleteRecord: (layout: string) =>
     request<{ records: TrackRecordInfo[] }>('DELETE', `/api/records/${encodeURIComponent(layout)}`),
   mute: (muted: boolean) => request<{ muted: boolean }>('POST', '/api/commentary/mute', { muted }),
+  layouts: () => request<{ layouts: TrackLayout[] }>('GET', '/api/layouts'),
+  layout: (name: string) =>
+    request<TrackLayout>('GET', `/api/layouts/${encodeURIComponent(name)}`),
+  saveLayout: (layout: TrackLayout) =>
+    request<TrackLayout>('PUT', `/api/layouts/${encodeURIComponent(layout.name)}`, layout),
+  deleteLayout: (name: string) =>
+    request<{ layouts: TrackLayout[] }>('DELETE', `/api/layouts/${encodeURIComponent(name)}`),
+  layoutFromPhoto: (body: {
+    image_base64: string
+    media_type: 'image/jpeg' | 'image/png' | 'image/webp'
+    name: string
+    language: 'en' | 'it'
+  }) => request<LayoutDraft>('POST', '/api/layouts/from-photo', body),
 }

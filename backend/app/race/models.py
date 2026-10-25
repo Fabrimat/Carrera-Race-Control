@@ -71,6 +71,33 @@ class Lap(BaseModel):
     valid: bool = True  # False when > max_lap_ms (e.g. after a crash / pit)
 
 
+class Crossing(BaseModel):
+    """A car passing a sensor: 1 = start/finish line, 2 and 3 = Check Lanes."""
+
+    sensor: int = Field(ge=1, le=3)
+    race_time_ms: int  # CU-timestamp based race clock of the crossing
+
+
+class TrackPosition(BaseModel):
+    """Where a car probably is, as a fraction of the lap along the layout path.
+
+    The browser animates s(t) between s_from and s_to:
+        s = s_from + (s_to - s_from) * clamp((race_now - anchor_race_ms) / expected_ms)
+    capped just before s_to (a car cannot pass a sensor unseen). When s_to < s_from the
+    stretch wraps through the start/finish line (s = 1.0 == 0.0).
+    """
+
+    from_sensor: int
+    to_sensor: int
+    s_from: float = Field(ge=0, lt=1)
+    s_to: float = Field(ge=0, lt=1)
+    anchor_race_ms: int  # race time when the car passed from_sensor
+    expected_ms: int | None = None  # None = no history yet: show the car at s_from
+    in_pit: bool = False
+    confidence: Literal["measured", "estimated", "stale"] = "estimated"
+    # stale = expected time exceeded by a wide margin (crash, deslot, stopped)
+
+
 class CarState(BaseModel):
     address: int
     name: str
@@ -89,6 +116,18 @@ class CarState(BaseModel):
     pit_stops: int = 0
     finished: bool = False
     lap_times: list[int] = Field(default_factory=list)  # all completed lap times, in order
+    # Sector timing (Check Lane sensors). Sector i is the stretch that ENDS at the i-th
+    # sensor in driving order: with Check Lanes 2 and 3 installed, sector 1 runs from the
+    # start/finish line to sensor 2, sector 2 from sensor 2 to sensor 3, sector 3 from
+    # sensor 3 back to the line. Lists have RaceState.num_sectors entries.
+    current_sectors: list[int | None] = Field(default_factory=list)  # lap in progress
+    last_sectors: list[int | None] = Field(default_factory=list)  # last completed lap
+    best_sectors: list[int | None] = Field(default_factory=list)  # personal bests
+    last_crossing: Crossing | None = None  # most recent sensor passed by this car
+    # Expected time (ms) to drive each segment, learned from previous laps (e.g. EWMA).
+    # Key "a>b" = from sensor a to sensor b, sensors being 1 (start/finish), 2, 3.
+    segment_estimates: dict[str, int] = Field(default_factory=dict)
+    track_pos: TrackPosition | None = None  # only when the current layout has a map
 
 
 class BestLapRecord(BaseModel):
@@ -121,6 +160,9 @@ class RaceState(BaseModel):
     cars: list[CarState] = Field(default_factory=list)  # sorted by position, unplaced last
     best_lap: BestLapRecord | None = None
     track_record: TrackRecordInfo | None = None  # for the current settings.track_layout
+    layout: str = "default"  # current settings.track.layout
+    num_sectors: int = 1  # 1 + number of Check Lane sensors (layout-declared or seen)
+    best_sectors: list[int | None] = Field(default_factory=list)  # overall best per sector
 
 
 # --------------------------------------------------------------------------- events
@@ -203,6 +245,18 @@ class TrackRecord(_EventBase):
     previous_holder: str | None = None
 
 
+class SectorCompleted(_EventBase):
+    """A car finished a sector (needs Check Lane sensors). Emitted while RUNNING/PAUSED."""
+
+    type: Literal["sector_completed"] = "sector_completed"
+    address: int
+    lap_number: int  # the lap this sector belongs to (1-based)
+    sector: int  # 1..num_sectors, see CarState.current_sectors
+    split_ms: int
+    personal_best: bool = False
+    overall_best: bool = False
+
+
 RaceEvent = Annotated[
     RaceStarted
     | LapCompleted
@@ -213,7 +267,8 @@ RaceEvent = Annotated[
     | LowFuel
     | RaceFinished
     | Idle
-    | TrackRecord,
+    | TrackRecord
+    | SectorCompleted,
     Field(discriminator="type"),
 ]
 
@@ -276,3 +331,39 @@ class Settings(BaseModel):
     commentary: CommentarySettings = Field(default_factory=CommentarySettings)
     track: TrackSettings = Field(default_factory=TrackSettings)
     race: RaceConfig = Field(default_factory=RaceConfig)
+
+
+# --------------------------------------------------------------------------- track map
+
+
+class LayoutSensor(BaseModel):
+    """Where a Check Lane sensor sits on the drawn path."""
+
+    sensor: int = Field(ge=2, le=3)  # the sector number the CU reports for it
+    s: float = Field(gt=0, lt=1)  # fraction of the lap from the start/finish line
+
+
+class TrackLayout(BaseModel):
+    """A drawn (or photo-derived) map of a track layout.
+
+    `points` is the closed centre line in DRIVING ORDER, normalised to 0..1 in both axes
+    (x right, y down), starting at the start/finish line: points[0] is the line and the
+    path implicitly closes from points[-1] back to points[0]. Fractions `s` are measured
+    by path length along this polyline. `aspect` = width / height of the drawing, so the
+    UI can render it undistorted.
+    """
+
+    name: str = Field(min_length=1, max_length=40)  # == TrackSettings.layout
+    points: list[tuple[float, float]] = Field(min_length=8, max_length=2000)
+    aspect: float = Field(default=1.5, gt=0.1, lt=10)
+    sensors: list[LayoutSensor] = Field(default_factory=list, max_length=2)
+    pit_s: float | None = Field(default=None, ge=0, lt=1)  # where to show cars in the pit
+    source: Literal["drawn", "photo"] = "drawn"
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class LayoutDraft(BaseModel):
+    """Result of converting a photo to a map; NOT saved until the user confirms it."""
+
+    layout: TrackLayout
+    notes: str = ""  # model's remarks (e.g. "start line guessed"), in the UI language

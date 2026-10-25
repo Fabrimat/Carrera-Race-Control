@@ -136,6 +136,7 @@ export const en = {
   'event.race_finished_no_winner': 'Race finished',
   'event.idle': 'Track idle for {seconds} s',
   'event.track_record': '{name}: NEW TRACK RECORD on {layout}, {time}',
+  'event.sector_completed': '{name}: sector {sector} in {time}',
   'events.title': 'Event log',
   'events.empty': 'No events yet.',
 
