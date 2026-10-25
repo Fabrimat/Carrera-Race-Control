@@ -70,6 +70,17 @@ Possible features:
 - A garage view: the list of the user's cars with logo, photo, best laps and
   preferred controller.
 
+## 5. Responsive control panel
+
+The control panel is first designed to fit everything on one 16:9 monitor without
+scrolling (1920×1080, 1366×768). Later it should become fully responsive:
+- ultrawide (21:9) and 4K layouts that use the extra space (bigger map, more columns);
+- tablets in landscape and portrait (touch-sized controls, collapsible panels);
+- phones as a "pit wall" or remote: race controls, leaderboard and latest commentary
+  only, with the map on tap.
+Panel priorities and breakpoints should be defined once and shared by the dashboard
+and TV mode.
+
 ## Also noted
 
 - Check Lane hardware: sector support is being built now and is tested on the simulator
