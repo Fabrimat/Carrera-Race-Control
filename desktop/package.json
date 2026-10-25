@@ -1,0 +1,25 @@
+{
+  "name": "carrera-desktop",
+  "productName": "Carrera Race Control",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Standalone Windows app for Carrera Race Control (Electron shell around the Python backend)",
+  "author": "Carrera Race Control",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json && tsc -p tsconfig.renderer.json && node scripts/copy-assets.mjs && node scripts/check-env-schema.mjs",
+    "check:env": "node scripts/check-env-schema.mjs",
+    "icon": "node scripts/make-icon.mjs",
+    "dev": "npm run build && node scripts/ensure-frontend.mjs && electron .",
+    "build:frontend": "node scripts/build-frontend.mjs",
+    "build:backend": "node scripts/build-backend.mjs",
+    "smoke": "node scripts/smoke.mjs",
+    "dist": "npm run build && npm run build:frontend && npm run build:backend && electron-builder --win nsis --x64 --config electron-builder.yml"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.1",
+    "electron": "44.7.0",
+    "electron-builder": "26.17.0",
+    "typescript": "5.9.3"
+  }
+}

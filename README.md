@@ -69,6 +69,27 @@ uv run python -m app     # serves the API and the built dashboard on http://127.
 
 `uv run uvicorn app.main:app` works too (it serves `frontend/dist` when it exists).
 
+## Desktop app (Windows)
+
+`desktop/` is an Electron shell that runs the whole app as a normal Windows program: it starts the backend on a free `127.0.0.1` port, opens the dashboard in a window and shuts everything down when you quit. The packaged app contains the backend built with PyInstaller, so Python, Node and uv are not needed on the target PC.
+
+Build requirements: Node.js 22, Python with uv (as in the Quick start), no global tools.
+
+```bash
+cd desktop
+npm install
+npm run dev        # builds the shell, starts the local backend (uv run python -m app), opens the window
+npm run dist       # frontend build + PyInstaller backend + NSIS installer
+```
+
+`npm run dist` writes the per-user installer to `desktop/release/Carrera-Race-Control-Setup-<version>.exe` (desktop and Start menu shortcuts, no admin rights). The PyInstaller step alone is `npm run build:backend` (output in `backend/build/pyi-dist/`, spec in `backend/packaging/`). The backend also accepts `--host` and `--port` (`python -m app --port 9000`). `npm run smoke` launches the app with Playwright and checks the backend, the TV window, the configuration window and that no backend process is left.
+
+**TV window.** Menu Window, "Open TV window" (or Ctrl+Shift+T) opens `#/tv` fullscreen and frameless on another monitor: the default is the first non-primary display, "Open TV window on..." lists all displays and remembers the choice. Esc leaves fullscreen, Ctrl+Shift+W (or Ctrl+Shift+T again) closes it. Only one TV window exists, the mouse cursor hides after 3 s, and if the monitor is unplugged the window moves back to the primary display. The page can do the same through `window.carreraDesktop` (`openTvWindow(displayId?)`, `listDisplays()`, `closeTvWindow()`, `setKeys()`, `getKeysStatus()`); the types are in `desktop/types/carrera-desktop.d.ts`.
+
+**Configuration.** There is no `.env` in the packaged app: File, "Configuration..." (also reachable from the page with `carreraDesktop.openConfig()`) edits every variable of `.env.example` in English or Italian, grouped as API keys, voice and models, track, simulator, commentary, network and advanced. Empty fields use the default shown in the field, with a "Reset to default" link; values are validated like the backend does (types, ranges, comma separated lists). Secrets (`*_API_KEY`) are encrypted with Electron `safeStorage` (Windows DPAPI, tied to your Windows user) in `keys.enc.json` and only shown as configured or not, with replace and remove; everything else is in `config.json`. All values reach the backend only through its process environment, never the dashboard or TV windows, and are never logged. Saving restarts the backend. `DATA_DIR` is managed by the app (read-only, with an "Open folder" button). The app's own address is always added to `ALLOWED_HOSTS` and `CORS_ORIGINS`. If secure storage is unavailable, secrets are not stored. File, "Import from .env file..." migrates an existing `.env` once (secrets are stored encrypted, the file is not kept). The field list is one table, `desktop/src/config-schema.ts`; `npm run check:env` (part of `npm run build`) fails when `.env.example` or `AppConfig` has a variable missing from it, so add one line there for every new variable.
+
+**Where data lives.** `%APPDATA%\Carrera Race Control\`: `data\` (SQLite database and TTS cache, the `DATA_DIR` of the backend), `logs\backend.log`, `keys.enc.json`, `config.json`, `desktop-prefs.json` (chosen TV display). The File menu opens the data and logs folders. If the backend crashes it is restarted with a growing delay and the window shows a status page meanwhile. The installer is not code signed, so SmartScreen may warn on first run.
+
 ## Simulator mode
 
 With `TRACK_MODE=simulator` (the default) the backend connects to a simulated Control Unit at startup: up to 6 cars with different pace, occasional slow laps, double triggers, fuel and pit stops. In the UI pick the simulator connection type and press Connect if it is not already connected, then start a race.
@@ -202,6 +223,7 @@ backend/
 frontend/
   src/                     React + TypeScript + Vite + Tailwind + Zustand + Recharts
   e2e/                     Playwright smoke test
+desktop/                   Electron shell (Windows app), TV window, configuration window
 docs/PROTOCOL.md           REST and WebSocket contract
 PLAN.md                    product plan
 ```

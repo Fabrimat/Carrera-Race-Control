@@ -1,0 +1,30 @@
+electronDist: node_modules/electron/dist
+appId: app.carrera.racecontrol
+productName: Carrera Race Control
+copyright: Carrera Race Control
+directories:
+  output: release
+  buildResources: build
+files:
+  - dist/**
+  - package.json
+extraResources:
+  # PyInstaller onedir backend -> resources/backend/carrera-backend.exe
+  - from: ../backend/build/pyi-dist/carrera-backend
+    to: backend
+  # app.main looks for the dashboard at <exe dir>/frontend/dist in a frozen build
+  - from: ../frontend/dist
+    to: backend/frontend/dist
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  icon: build/icon.ico
+nsis:
+  oneClick: true
+  perMachine: false
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  shortcutName: Carrera Race Control
+  deleteAppDataOnUninstall: false
+artifactName: Carrera-Race-Control-Setup-${version}.${ext}

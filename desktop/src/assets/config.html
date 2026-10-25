@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'">
+<title>Configuration</title>
+<link rel="stylesheet" href="base.css">
+</head>
+<body class="config">
+<main>
+  <h1 id="heading"></h1>
+  <p id="intro"></p>
+  <form id="form" autocomplete="off" novalidate>
+    <div id="groups"></div>
+    <div id="message" role="status"></div>
+    <div class="actions">
+      <button type="button" id="import"></button>
+      <span class="spacer"></span>
+      <button type="button" id="cancel"></button>
+      <button type="submit" id="save" class="primary"></button>
+    </div>
+  </form>
+</main>
+<script src="../renderer/config.js"></script>
+</body>
+</html>

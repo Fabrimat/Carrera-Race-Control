@@ -1,0 +1,35 @@
+:root { color-scheme: dark; }
+* { box-sizing: border-box; }
+body { margin: 0; font: 15px/1.45 "Segoe UI", system-ui, sans-serif; background: #0b0d10; color: #e8eaed; }
+main { padding: 24px 28px; }
+h1 { font-size: 20px; margin: 0 0 8px; }
+p { color: #aab0b8; margin: 0 0 16px; }
+.center { min-height: 100vh; display: grid; place-content: center; text-align: center; }
+.spinner { width: 36px; height: 36px; margin: 0 auto 18px; border: 4px solid #2a2f36; border-top-color: #e5322d; border-radius: 50%; animation: spin 0.9s linear infinite; }
+[data-state="error"] .spinner, [data-state="failed"] .spinner { border-color: #e5322d; animation: none; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.detail { font-size: 12px; color: #6f7680; }
+.row { margin-bottom: 14px; }
+label { display: block; font-weight: 600; margin-bottom: 4px; }
+input { width: 100%; padding: 8px 10px; border-radius: 6px; border: 1px solid #343a42; background: #14181d; color: inherit; font: inherit; }
+input:focus { outline: 2px solid #e5322d; outline-offset: 0; }
+.meta { font-size: 12px; margin-top: 3px; display: flex; gap: 12px; }
+.ok { color: #5fd38d; } .unset { color: #8b929b; } .error { color: #ff7b72; }
+button { font: inherit; padding: 8px 14px; border-radius: 6px; border: 1px solid #343a42; background: #1c2128; color: inherit; cursor: pointer; }
+button.primary { background: #e5322d; border-color: #e5322d; color: #fff; }
+button:disabled { opacity: 0.5; cursor: default; }
+button.link { border: 0; background: none; padding: 0; color: #7aa7ff; text-decoration: underline; }
+.actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; }
+#message { min-height: 1.4em; }
+body.config main { padding-bottom: 90px; }
+fieldset { border: 1px solid #262b32; border-radius: 8px; margin: 0 0 18px; padding: 10px 16px 6px; }
+legend { padding: 0 8px; font-weight: 700; color: #e8eaed; }
+select { width: 100%; padding: 8px 10px; border-radius: 6px; border: 1px solid #343a42; background: #14181d; color: inherit; font: inherit; }
+.help { font-size: 12px; color: #8b929b; margin-top: 3px; }
+.field-error { font-size: 12px; color: #ff7b72; margin-top: 3px; }
+input.invalid, select.invalid { border-color: #ff7b72; }
+.inline { display: flex; gap: 8px; align-items: center; }
+.inline input { flex: 1; }
+.spacer { flex: 1; }
+.actions { position: sticky; bottom: 0; background: #0b0d10; padding: 12px 0; border-top: 1px solid #262b32; align-items: center; }
+code { color: #aab0b8; word-break: break-all; }
