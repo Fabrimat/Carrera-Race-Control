@@ -46,6 +46,14 @@ export function describeEvent(
       return t('event.track_record', { name: name(e.address), layout: e.layout, time: lap(e.lap_ms) })
     case 'idle':
       return t('event.idle', { seconds: e.seconds })
+    case 'false_start':
+      return e.address === null
+        ? t('event.false_start')
+        : t('event.false_start_car', { name: name(e.address) })
+    case 'driver_assigned':
+      return t('event.driver_assigned', { driver: e.driver_name, name: name(e.address) })
+    case 'session_finished':
+      return t('event.session_finished')
     case 'sector_completed':
       return t('event.sector_completed', {
         name: name(e.address),

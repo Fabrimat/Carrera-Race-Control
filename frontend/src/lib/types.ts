@@ -57,6 +57,10 @@ export interface CarState {
   last_crossing: Crossing | null
   segment_estimates: Record<string, number> // key "a>b", sensors 1 (line), 2, 3
   track_pos: TrackPosition | null
+  // Event mode: the person driving this controller (else show the car name).
+  driver_id: string | null
+  driver_name: string | null
+  penalty_ms: number
 }
 
 export interface Crossing {
@@ -128,6 +132,7 @@ export interface RaceState {
   layout: string
   num_sectors: number
   best_sectors: (number | null)[]
+  session: SessionInfo | null
 }
 
 // ------------------------------------------------------------------ events
@@ -187,6 +192,25 @@ export type RaceEvent =
       split_ms: number
       personal_best: boolean
       overall_best: boolean
+    })
+  | (EventBase & {
+      type: 'false_start'
+      address: number | null
+      action: 'ignore' | 'warn' | 'penalty' | 'restart'
+      penalty_ms: number
+    })
+  | (EventBase & {
+      type: 'driver_assigned'
+      address: number
+      driver_id: string
+      driver_name: string
+      method: 'manual' | 'crossing' | 'voice'
+    })
+  | (EventBase & {
+      type: 'session_finished'
+      session_id: string
+      kind: SessionKind
+      order: number[]
     })
 
 export interface CommentaryLine {
@@ -291,3 +315,105 @@ export type WsMessage =
   | { type: 'commentary'; data: CommentaryLine }
   | { type: 'commentary_stop'; data: { id: string } }
   | { type: 'muted'; data: { muted: boolean } }
+
+
+// ------------------------------------------------------------------ event mode
+
+export type SessionKind = 'practice' | 'qualifying' | 'race'
+
+export interface SessionInfo {
+  program_id: string
+  program_name: string
+  session_id: string
+  kind: SessionKind
+  name: string
+  index: number
+  total: number
+}
+
+export interface Driver {
+  id: string
+  name: string
+  nickname: string | null
+  bio: string
+  has_photo: boolean
+  created_at: string
+}
+
+export interface FalseStartRule {
+  action: 'ignore' | 'warn' | 'penalty' | 'restart'
+  penalty_s: number
+}
+
+export interface SessionSpec {
+  id: string
+  kind: SessionKind
+  name: string
+  mode: RaceMode
+  target_laps: number
+  duration_s: number
+  false_start: FalseStartRule
+  grid_from: string | null
+}
+
+export interface CommentaryContext {
+  event_name: string
+  location: string
+  sponsors: string[]
+  tone: 'family' | 'enthusiastic' | 'technical' | 'ironic'
+  notes: string
+  avoid_words: string[]
+}
+
+export interface EventProgram {
+  id: string
+  name: string
+  sessions: SessionSpec[]
+  commentary: CommentaryContext
+  updated_at: string
+}
+
+export interface ClassificationRow {
+  position: number
+  address: number
+  driver_id: string | null
+  name: string
+  laps: number
+  best_lap_ms: number | null
+  total_time_ms: number | null
+  penalty_ms: number
+}
+
+export interface SessionResult {
+  session_id: string
+  kind: SessionKind
+  race_id: number | null
+  finished_at: string
+  classification: ClassificationRow[]
+}
+
+export interface EventState {
+  program_id: string | null
+  current_index: number
+  assignments: Record<string, string> // address (as string key) -> driver id
+  results: SessionResult[]
+}
+
+export type ExportSection = 'settings' | 'drivers' | 'programs' | 'layouts' | 'records'
+
+export interface ExportBundle {
+  format: 'carrera-rms'
+  version: number
+  exported_at: string
+  app_version: string
+  settings?: Settings | null
+  drivers?: Driver[] | null
+  programs?: EventProgram[] | null
+  layouts?: TrackLayout[] | null
+  records?: TrackRecordInfo[] | null
+}
+
+export interface ImportReport {
+  report: Record<string, { added: number; updated: number; removed: number }>
+  applied: boolean
+}

@@ -11,6 +11,12 @@ import type {
   TrackMode,
   TrackLayout,
   LayoutDraft,
+  Driver,
+  EventProgram,
+  EventState,
+  ExportBundle,
+  ExportSection,
+  ImportReport,
   TrackRecordInfo,
 } from './types'
 
@@ -85,6 +91,39 @@ export const api = {
     request<TrackLayout>('PUT', `/api/layouts/${encodeURIComponent(layout.name)}`, layout),
   deleteLayout: (name: string) =>
     request<{ layouts: TrackLayout[] }>('DELETE', `/api/layouts/${encodeURIComponent(name)}`),
+  // ---- event mode (docs/PROTOCOL.md "Event mode")
+  drivers: () => request<{ drivers: Driver[] }>('GET', '/api/drivers'),
+  createDriver: (d: { name: string; nickname?: string | null; bio?: string }) =>
+    request<Driver>('POST', '/api/drivers', d),
+  saveDriver: (d: Driver) => request<Driver>('PUT', `/api/drivers/${encodeURIComponent(d.id)}`, d),
+  deleteDriver: (id: string) =>
+    request<{ drivers: Driver[] }>('DELETE', `/api/drivers/${encodeURIComponent(id)}`),
+  driverPhotoUrl: (id: string, bust = '') => `/api/drivers/${encodeURIComponent(id)}/photo${bust ? `?v=${bust}` : ''}`,
+  setDriverPhoto: (id: string, body: { image_base64: string; media_type: string }) =>
+    request<Driver>('PUT', `/api/drivers/${encodeURIComponent(id)}/photo`, body),
+  deleteDriverPhoto: (id: string) =>
+    request<Driver>('DELETE', `/api/drivers/${encodeURIComponent(id)}/photo`),
+  assignments: () => request<{ assignments: Record<string, string> }>('GET', '/api/event/assignments'),
+  setAssignments: (assignments: Record<string, string | null>) =>
+    request<{ assignments: Record<string, string> }>('PUT', '/api/event/assignments', { assignments }),
+  armNextCrossing: (driver_id: string) =>
+    request<{ armed: boolean }>('POST', '/api/event/assign-next-crossing', { driver_id }),
+  cancelNextCrossing: () => request<{ armed: boolean }>('DELETE', '/api/event/assign-next-crossing'),
+  transcribe: (body: { audio_base64: string; media_type: string; language: 'en' | 'it' }) =>
+    request<{ text: string; name_guess: string }>('POST', '/api/event/transcribe', body),
+  programs: () => request<{ programs: EventProgram[] }>('GET', '/api/programs'),
+  saveProgram: (p: EventProgram) =>
+    request<EventProgram>('PUT', `/api/programs/${encodeURIComponent(p.id)}`, p),
+  deleteProgram: (id: string) =>
+    request<{ programs: EventProgram[] }>('DELETE', `/api/programs/${encodeURIComponent(id)}`),
+  event: () => request<EventState>('GET', '/api/event'),
+  startEvent: (program_id: string) => request<EventState>('POST', '/api/event/start', { program_id }),
+  nextSession: () => request<EventState>('POST', '/api/event/next'),
+  stopEvent: () => request<EventState>('POST', '/api/event/stop'),
+  exportBundle: (sections: ExportSection[]) =>
+    request<ExportBundle>('POST', '/api/export', { sections }),
+  importBundle: (bundle: ExportBundle, mode: 'merge' | 'replace', dry_run: boolean) =>
+    request<ImportReport>('POST', '/api/import', { bundle, mode, dry_run }),
   layoutFromPhoto: (body: {
     image_base64: string
     media_type: 'image/jpeg' | 'image/png' | 'image/webp'

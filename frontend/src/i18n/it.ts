@@ -140,6 +140,10 @@ export const it: Messages = {
   'event.idle': 'Pista ferma da {seconds} s',
   'event.track_record': '{name}: NUOVO RECORD DEL TRACCIATO su {layout}, {time}',
   'event.sector_completed': '{name}: settore {sector} in {time}',
+  'event.false_start': 'Falsa partenza!',
+  'event.false_start_car': 'Falsa partenza di {name}!',
+  'event.driver_assigned': '{driver} guida {name}',
+  'event.session_finished': 'Sessione conclusa',
   'events.title': 'Registro eventi',
   'events.empty': 'Ancora nessun evento.',
 

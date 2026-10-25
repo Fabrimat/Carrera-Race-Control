@@ -66,6 +66,9 @@ export function car(over: Partial<CarState> & { address: number }): CarState {
     last_crossing: null,
     segment_estimates: {},
     track_pos: null,
+    driver_id: null,
+    driver_name: null,
+    penalty_ms: 0,
     ...over,
   }
 }

@@ -139,6 +139,10 @@ export const en = {
   'event.idle': 'Track idle for {seconds} s',
   'event.track_record': '{name}: NEW TRACK RECORD on {layout}, {time}',
   'event.sector_completed': '{name}: sector {sector} in {time}',
+  'event.false_start': 'False start!',
+  'event.false_start_car': 'False start by {name}!',
+  'event.driver_assigned': '{driver} is driving {name}',
+  'event.session_finished': 'Session finished',
   'events.title': 'Event log',
   'events.empty': 'No events yet.',
 

@@ -192,3 +192,73 @@ notice says so. Errors: `llm_unavailable` (no key or
 disabled), `image_too_large` (> 8 MB decoded), `invalid_image`, `photo_unrecognised`
 (no closed track found). The UI warns that the photo is sent to the AI provider and always
 opens the draft in the editor for correction before saving.
+
+## Event mode
+
+Separates **cars** (controller/car: `CarConfig`, colour, logo, nickname) from **drivers**
+(people: `Driver`, a reusable roster). Each session assigns drivers to controller
+addresses; `CarState.driver_id` / `driver_name` carry the assignment and every UI shows
+`driver_name` when set (else the car's name/nickname). All shapes are in
+`backend/app/race/models.py` ("event mode" section).
+
+### Drivers and assignment
+
+| Method | Path | Body | Response |
+|---|---|---|---|
+| GET | `/api/drivers` | – | `{"drivers": Driver[]}` by name |
+| POST | `/api/drivers` | `{"name", "nickname"?, "bio"?}` | `Driver` (id generated) |
+| PUT | `/api/drivers/{id}` | `Driver` | `Driver` |
+| DELETE | `/api/drivers/{id}` | – | `{"drivers": Driver[]}` (also removes its assignments) |
+| PUT | `/api/drivers/{id}/photo` | `{"image_base64", "media_type"}` (≤ 2 MB, jpeg/png/webp) | `Driver` (`has_photo` true) |
+| GET | `/api/drivers/{id}/photo` | – | the image (404 if none) |
+| DELETE | `/api/drivers/{id}/photo` | – | `Driver` |
+| GET | `/api/event/assignments` | – | `{"assignments": {address: driver_id}}` |
+| PUT | `/api/event/assignments` | `{"assignments": {address: driver_id \| null}}` | same (manual) |
+| POST | `/api/event/assign-next-crossing` | `{"driver_id"}` | `{"armed": true}` — the next car to cross the start/finish line (while no race is running) gets this driver; emits `driver_assigned` (method `crossing`). One armed driver at a time; `DELETE` same path cancels. Times out after 60 s. |
+| POST | `/api/event/transcribe` | `{"audio_base64", "media_type", "language"}` (≤ 2 MB) | `{"text", "name_guess"}` speech-to-text of a spoken name (ElevenLabs STT, or OpenAI if that is the selected provider); errors `llm_unavailable` / `transcription_failed` |
+
+Assignments persist until changed; "new session, same drivers" is one click in the UI.
+Driver photos are stored in `DATA_DIR/avatars/` and shown in the TV graphics; there is
+no face recognition.
+
+### Event program and sessions
+
+| Method | Path | Body | Response |
+|---|---|---|---|
+| GET | `/api/programs` | – | `{"programs": EventProgram[]}` |
+| PUT | `/api/programs/{id}` | `EventProgram` | `EventProgram` |
+| DELETE | `/api/programs/{id}` | – | `{"programs": EventProgram[]}` |
+| GET | `/api/event` | – | `EventState` |
+| POST | `/api/event/start` | `{"program_id"}` | `EventState` (index 0, results cleared, assignments kept) |
+| POST | `/api/event/next` | – | `EventState` (advance to the next session; `/api/race/start` then runs it with its spec) |
+| POST | `/api/event/stop` | – | `EventState` (program_id null; results kept until next start) |
+
+While an event is active, `POST /api/race/start` without a body uses the current
+`SessionSpec` (mode, laps/duration) and `RaceState.session` is set. When the race
+finishes, the classification (laps desc, then total time **including `penalty_ms`**;
+qualifying: best valid lap asc) is stored as a `SessionResult`, `session_finished` is
+emitted, and the UI offers "next session". `grid_from` shows that session's
+classification as the starting order (slot cars have no physical grid; it is shown in
+the UI/TV and to the commentator).
+
+False start (`Status.start` 8/9 while starting): the CU does not identify the car. The
+rule's action: `ignore` (nothing), `warn` (event + banner + commentary), `penalty`
+(adds `penalty_s` to the car if it can be identified, otherwise behaves like `warn`),
+`restart` (stops and restarts the start sequence once).
+
+`EventProgram.commentary` (event name, location, sponsors, tone, notes, words to avoid)
+and the drivers' `bio` are added to the AI commentator's facts; the prompt keeps the
+"use only the given facts" rule and the tone selects the style.
+
+### Export / import
+
+| Method | Path | Body | Response |
+|---|---|---|---|
+| POST | `/api/export` | `{"sections": ["settings","drivers","programs","layouts","records"]}` | `ExportBundle` as a `.json` download (`carrera-rms-<date>.json`) |
+| POST | `/api/import` | `{"bundle": ExportBundle, "mode": "merge"\|"replace", "dry_run": bool}` | `{"report": {section: {"added": n, "updated": n, "removed": n}}, "applied": bool}` |
+
+Bundles never contain API keys. Unknown future `version` → 422 `import_unsupported`;
+invalid content → 422 `import_invalid` with details. `merge` upserts by id/name;
+`replace` replaces each included section. The UI always shows the dry-run report before
+applying. The desktop app's configuration window has its own export of non-secret
+desktop settings.
