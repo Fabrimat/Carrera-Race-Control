@@ -16,39 +16,31 @@ hiccups, never bypass signing).
   schema v4, empty routers `backend/app/api/routes_{drivers,event,io}.py`, reserved
   i18n blocks.
 
-## In progress (updated)
+## State (end of the local session)
 
-1. **Event mode** — merged on `main` and reviewed: E1 drivers/photos/assignments/STT
-   backend, E4 roster + "Who's driving?" frontend, E5 programs/session runner/TV
-   graphics/import-export frontend. Still to do:
-   - **E2** (sessions, qualifying order, false start inference, penalties in the ranking,
-     commentator context) — was being built by an arm on the user's PC (local worktree);
-     a partial snapshot is on branch `wip/event-e2-sessions` (unreviewed). Brief in
-     [event-mode-briefs.md](event-mode-briefs.md). Until it lands, the frontend's
-     `/api/programs` and `/api/event/*` calls get 404/405.
-   - **E3** export/import backend (`routes_io.py`), see the brief notes below; frontend
-     import cap is 5 MB, so the backend body limit for `/api/import` must allow 5 MB.
-   - Fable SUPERVISE of the integrated event mode, Playwright e2e, small nits: stop late
-     `getUserMedia` streams in `VoiceInput`/`PhotoCapture` if unmounted while pending;
-     `api.transcribe` `name_guess` type should be `string | null`.
-   E3 brief: `POST /api/export`, `POST /api/import` per PROTOCOL "Export / import" (same
-   code path for dry run and apply in one SQLite transaction, rolled back on dry run;
-   settings/layouts validated like their own endpoints; records merge keeps the faster
-   lap; replace of drivers purges their assignments; `has_photo` false; unknown version →
-   422 `import_unsupported`, invalid → 422 `import_invalid`).
-2. **CI** — `.github/workflows/desktop.yml` works: ARM64 build passed; x64 failed only on
-   the frontend test command (fixed in 45e9d46). Repo was renamed to
-   `Fabrimat/Carrera-Race-Control` (local remote still points to the old URL, GitHub
-   redirects). Actions on Node 20 are deprecated: Dependabot will bump them.
-3. **README screenshots/GIFs** (requested): capture the app (English UI) with Playwright
-   on the simulator — dashboard 16:9, TV mode, track editor/live map, drivers + who's
-   driving, event page; short GIFs (ffmpeg palettegen) of the start lights and TV banners;
-   store under `docs/images/` (keep each < ~1.5 MB) and embed in README.
-4. **Presentation video** — being produced on the user's PC by an arm (brief kept in the
-   local scratchpad; summary): ≤ 90 s, Italian UI; **cold open like a trailer: the start
-   lights come on, lights out, then the AI commentator calls the action**; then a
-   professional Italian narrator over app footage, ElevenLabs music/SFX/Veo shots,
-   simulated webcam for the roadmap part. Output stays outside the repo.
+All done, reviewed, Fable-approved and pushed:
+- **Event mode** complete (E1–E5): drivers + photos + "Who's driving?" (tap / voice /
+  crossing), programs with practice/qualifying/race, false start inference + rules,
+  penalties in the ranking, commentator context, JSON export/import with dry run; the
+  commentator names assigned drivers. Backend 614 tests, frontend 203, e2e smoke green.
+- **CI** `.github/workflows/desktop.yml`: x64 + ARM64 installers green, attached to every
+  `v*` release. Repo renamed to `Fabrimat/Carrera-Race-Control` (update local remotes:
+  `git remote set-url origin https://github.com/Fabrimat/Carrera-Race-Control.git`).
+- **README** screenshots and GIFs in `docs/images/`.
+- **Presentation video** (84 s, Italian) produced on the user's PC, not in the repo
+  (scratchpad `video/out/carrera-race-control-presentazione.mp4`, scripts in
+  `video/scripts/`).
+
+## Open points
+
+- Live-test the `restart` false start rule on the real Control Unit before using it at an
+  event (conservative now: worst case the race stays "starting" and the operator presses
+  START on the CU). `warn` / `penalty` need no CU interaction.
+- Listen to the video narration once (voices were chosen by metadata); the video was
+  recorded before the "commentator names the driver" fix.
+- Actions on Node 20 are deprecated: merge Dependabot's bumps when they arrive.
+- Roadmap: see docs/ROADMAP.md (webcam tracking, incidents, logos, fuel, pairing,
+  responsive panel, keyboard shortcuts).
 
 ## Environment notes
 
