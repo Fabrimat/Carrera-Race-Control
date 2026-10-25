@@ -114,6 +114,15 @@ export function TvMode() {
         <div className="tv-top-left">
           <span className="tv-live"><i />{t('tv.live')}</span>
           <span className="tv-mode">{t(`mode.${race.config.mode}`)}</span>
+          {race.session && (
+            <span className="tv-session" data-testid="tv-session">
+              {t('ev.tv_session', {
+                name: race.session.name.trim() || t(`ev.kind.${race.session.kind}`),
+                n: race.session.index + 1,
+                total: race.session.total,
+              })}
+            </span>
+          )}
         </div>
         <TopCentre race={race} />
         <div className="tv-top-right">

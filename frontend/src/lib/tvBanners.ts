@@ -1,6 +1,6 @@
 import type { TFunction } from '../i18n'
 import { priorityOf, type Banner, type BannerKind } from './bannerQueue'
-import type { CarState, RaceEvent, RaceState } from './types'
+import type { CarState, RaceEvent, RaceState, SessionResult } from './types'
 
 /** Visible time of each banner kind, ms. */
 const DURATION: Record<BannerKind, number> = {
@@ -13,9 +13,11 @@ const DURATION: Record<BannerKind, number> = {
   control: 4200,
   final_lap: 4800,
   chequered: Infinity,
+  false_start: 5200,
+  session_result: Infinity,
 }
 
-const CENTER: BannerKind[] = ['final_lap', 'chequered', 'track_record']
+const CENTER: BannerKind[] = ['final_lap', 'chequered', 'track_record', 'session_result']
 
 export interface BannerContext {
   cars: CarState[]
@@ -70,6 +72,20 @@ export function bannerForEvent(e: RaceEvent, c: BannerContext): Banner | null {
       return make('pit_out', id, c.t('tv.banner.pit_out', { code: code(e.address) }), { color: car(e.address)?.color })
     case 'low_fuel':
       return make('low_fuel', id, c.t('tv.banner.low_fuel', { code: code(e.address) }), { color: car(e.address)?.color })
+    case 'false_start': {
+      if (e.action === 'ignore') return null
+      const who = e.address === null ? null : name(e.address)
+      const sub =
+        e.action === 'penalty'
+          ? c.t('tv.banner.false_start_penalty', { seconds: Math.round(e.penalty_ms / 1000) })
+          : e.action === 'restart'
+            ? c.t('tv.banner.false_start_restart')
+            : undefined
+      return make('false_start', id, c.t('tv.banner.false_start'), {
+        subtitle: [who, sub].filter(Boolean).join('  ') || undefined,
+        color: car(e.address)?.color,
+      })
+    }
     default:
       return null
   }
@@ -114,6 +130,23 @@ export function chequeredBanner(race: RaceState, c: BannerContext): Banner {
       color: x.color,
       best: c.lap(x.best_lap_ms),
       time: x.gap_to_leader_laps > 0 ? c.t('gap.laps', { count: x.gap_to_leader_laps }) : x.position === 1 ? `${x.laps} ${c.t('leaderboard.laps')}` : '',
+    })),
+  })
+}
+
+/** End-of-session classification card (positions, best lap, penalty); up to 6 rows. */
+export function sessionResultBanner(result: SessionResult, title: string, c: BannerContext): Banner {
+  const colorOf = (a: number) => c.cars.find((x) => x.address === a)?.color ?? '#888888'
+  return make('session_result', `session:${result.session_id}:${result.finished_at}`, title, {
+    subtitle: c.t(result.kind === 'qualifying' ? 'tv.results.qualifying' : 'tv.results.title'),
+    rows: result.classification.slice(0, 6).map((r) => ({
+      pos: r.position,
+      code: c.codes.get(r.address) ?? '',
+      name: r.name,
+      color: colorOf(r.address),
+      best: c.lap(r.best_lap_ms),
+      time: '',
+      note: r.penalty_ms > 0 ? `+${r.penalty_ms / 1000}s` : undefined,
     })),
   })
 }

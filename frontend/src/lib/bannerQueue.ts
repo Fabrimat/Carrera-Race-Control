@@ -14,6 +14,8 @@ export type BannerKind =
   | 'control'
   | 'final_lap'
   | 'chequered'
+  | 'false_start'
+  | 'session_result'
 
 export interface Banner {
   /** Unique key: a banner with the id of one already queued or on screen is ignored. */
@@ -30,7 +32,7 @@ export interface Banner {
   /** Accent colour (a car colour); kind-specific colours come from CSS. */
   color?: string
   /** Free-form payload for card banners (podium rows). */
-  rows?: { pos: number; code: string; name: string; color: string; best: string; time: string }[]
+  rows?: { pos: number; code: string; name: string; color: string; best: string; time: string; note?: string }[]
 }
 
 export interface ActiveBanner {
@@ -63,7 +65,9 @@ const PRIORITY: Record<BannerKind, number> = {
   control: 3,
   final_lap: 4,
   track_record: 5,
+  false_start: 6,
   chequered: CLEARING_PRIORITY,
+  session_result: CLEARING_PRIORITY,
 }
 export const priorityOf = (kind: BannerKind) => PRIORITY[kind]
 
