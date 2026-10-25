@@ -723,3 +723,21 @@ def test_no_key_or_audio_in_the_log_output(make_client, caplog) -> None:
         client.post("/api/event/transcribe", json=body)
     assert "SECRET-AUDIO" not in caplog.text and b64(secret_audio) not in caplog.text
     assert json.dumps(body) not in caplog.text
+
+
+def test_commentator_names_assigned_drivers_instead_of_cars(make_client) -> None:
+    from app.race.models import CarConfig
+
+    client = make_client()
+    ctl = client.app.state.controller
+    ctl.settings.cars = [
+        CarConfig(address=0, name="Rosso 1", color="#ff0000", nickname="Rosso"),
+        CarConfig(address=1, name="Blue Arrow", color="#0000ff", nickname=None),
+    ]
+    ctl.store.save_driver(Driver(id="paolo", name="Paolo", nickname="Il Fulmine"))
+    ctl._drivers_cache = None
+    ctl._update_event_state(lambda s: s.assignments.update({0: "paolo"}))
+    spoken = ctl._spoken_cars()
+    assert (spoken[0].name, spoken[0].nickname) == ("Paolo", "Il Fulmine")
+    assert spoken[1].name == "Blue Arrow"
+    assert ctl.settings.cars[0].name == "Rosso 1"  # settings untouched

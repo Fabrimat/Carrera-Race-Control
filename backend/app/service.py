@@ -309,7 +309,7 @@ class RaceController:
         self._writer_signature = self._writer_key()
         self.director = CommentaryDirector(
             self.settings.commentary,
-            cars=lambda: {c.address: c for c in self.settings.cars},
+            cars=self._spoken_cars,
             writer=self._switchable,
             tts=self.tts,
             budget=self.budget,
@@ -1221,6 +1221,18 @@ class RaceController:
         if self._drivers_cache is None:
             self._drivers_cache = {d.id: d for d in self.store.list_drivers()}
         return self._drivers_cache
+
+    def _spoken_cars(self) -> dict[int, CarConfig]:
+        """Cars as the commentator names them: an assigned driver replaces the car's name."""
+        assignments = self._event_state.assignments
+        drivers = self._driver_map() if assignments else {}
+        cars: dict[int, CarConfig] = {}
+        for car in self.settings.cars:
+            driver = drivers.get(assignments.get(car.address, ""))
+            if driver is not None:
+                car = car.model_copy(update={"name": driver.name, "nickname": driver.nickname})
+            cars[car.address] = car
+        return cars
 
     def _fill_drivers(self, state: RaceState) -> None:
         """Copy the assignments into the cars of a published state."""
