@@ -8,12 +8,18 @@ import type { RaceConfig, RaceMode } from '../lib/types'
 
 const MODES: RaceMode[] = ['practice', 'laps', 'timed']
 
-const btn =
+const btnFull =
   'rounded-md px-5 py-3 text-lg font-bold uppercase tracking-wide transition disabled:cursor-not-allowed disabled:opacity-35'
-const field = 'rounded-md border border-line bg-panel-2 px-3 py-2 text-lg num'
+const btnCompact =
+  'rounded-md px-3 py-2 text-base font-bold uppercase tracking-wide transition disabled:cursor-not-allowed disabled:opacity-35'
+const fieldFull = 'rounded-md border border-line bg-panel-2 px-3 py-2 text-lg num'
+const fieldCompact = 'rounded-md border border-line bg-panel-2 px-2 py-1 text-base num'
 
-export function RaceControls() {
+/** `compact` packs the controls into one wrapping row for the no-scroll 16:9 dashboard. */
+export function RaceControls({ compact = false }: { compact?: boolean }) {
   const t = useT()
+  const btn = compact ? btnCompact : btnFull
+  const field = compact ? fieldCompact : fieldFull
   const race = useStore((s) => s.race)
   const defaults = useStore((s) => s.settings?.race)
   const [override, setOverride] = useState<Partial<RaceConfig>>({})
@@ -37,8 +43,11 @@ export function RaceControls() {
   }
 
   return (
-    <section className="rounded-lg border border-line bg-panel p-4" aria-label={t('controls.title')}>
-      <div className="mb-3 flex flex-wrap items-end gap-4">
+    <section
+      className={`rounded-lg border border-line bg-panel ${compact ? 'flex flex-wrap items-end gap-3 p-2' : 'p-4'}`}
+      aria-label={t('controls.title')}
+    >
+      <div className={`flex flex-wrap items-end gap-4 ${compact ? '' : 'mb-3'}`}>
         <label className="flex flex-col gap-1 text-xs uppercase tracking-widest text-dim">
           {t('controls.mode')}
           <select

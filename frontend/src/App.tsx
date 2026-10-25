@@ -50,9 +50,11 @@ export default function App() {
   }, [conn.status, conn.error_code, conn.error])
 
   return (
-    <div className="flex min-h-full flex-col">
+    // The window itself never scrolls: the header stays put and `main` scrolls on the pages that
+    // need it, so the dashboard can be a full-viewport 16:9 grid.
+    <div className="flex h-dvh flex-col overflow-hidden">
       {route.name !== 'tv' && <Header route={route} />}
-      <main className="flex-1">
+      <main className="min-h-0 flex-1 overflow-y-auto">
         <Suspense fallback={<p className="p-6 text-dim">{t('common.loading')}</p>}>
           {route.name === 'dashboard' && <Dashboard />}
           {route.name === 'history' && <History />}

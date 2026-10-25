@@ -11,6 +11,8 @@ interface Props {
   trackRecord?: TrackRecordInfo | null
   fuelMode: boolean
   large?: boolean
+  /** Tighter rows on small screens (16:9 control panel); full size from 1700 px wide. */
+  dense?: boolean
   /** Number of sectors (1 = no Check Lanes: no sector columns). */
   numSectors?: number
   /** Overall best time of each sector (purple). */
@@ -168,6 +170,7 @@ export function Leaderboard({
   trackRecord = null,
   fuelMode,
   large = false,
+  dense = false,
   editable = false,
   numSectors = 1,
   bestSectors = [],
@@ -187,7 +190,8 @@ export function Leaderboard({
         gridTemplateColumns: `3.5rem minmax(0,1.6fr) 4rem 1fr 1fr ${'minmax(0,0.7fr) '.repeat(sectors)}1fr${fuelMode ? ' 8rem' : ''}`,
       }
     : undefined
-  const text = large ? 'text-4xl' : 'text-2xl'
+  const text = large ? 'text-4xl' : dense ? 'text-xl min-[1700px]:text-2xl' : 'text-2xl'
+  const rowPad = dense ? 'py-1 min-[1700px]:py-2' : 'py-2'
   const head = 'text-xs uppercase tracking-widest text-dim'
 
   if (rows.length === 0) {
@@ -227,7 +231,7 @@ export function Leaderboard({
               style={{ ...gridStyle, borderLeft: `8px solid ${c.color}` }}
               data-addr={c.address}
               data-testid="leaderboard-row"
-              className={`grid ${cols} items-center gap-3 rounded-md border border-line bg-panel px-3 py-2 ${text}`}
+              className={`grid ${cols} items-center gap-3 rounded-md border border-line bg-panel px-3 ${rowPad} ${text}`}
             >
               <span role="cell" className="num font-bold">{c.position ?? '–'}</span>
               <span role="cell" className="flex min-w-0 items-center gap-3 font-semibold">
@@ -276,7 +280,7 @@ export function Leaderboard({
               {Array.from({ length: sectors }, (_, i) => (
                 <SectorCell key={i} index={i} car={c} overall={bestSectors[i] ?? null} />
               ))}
-              <span role="cell" className="num text-right" data-testid="gap">{gap}</span>
+              <span role="cell" className="num whitespace-nowrap text-right" data-testid="gap">{gap}</span>
               {fuelMode && (
                 <span role="cell">{c.fuel !== null ? <FuelBar fuel={c.fuel} /> : null}</span>
               )}

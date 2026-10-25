@@ -3,7 +3,7 @@ import { useFormat, useT } from '../i18n/useT'
 import type { Series } from '../lib/series'
 
 /** Recharts line chart. Lazy-loaded through LazyLapChart so recharts stays out of the main chunk. */
-export default function LapChart({ series, height = 280 }: { series: Series[]; height?: number }) {
+export default function LapChart({ series, height = 280 }: { series: Series[]; height?: number | string }) {
   const t = useT()
   const f = useFormat()
   const maxLap = Math.max(0, ...series.flatMap((s) => s.points.map((p) => p.lap)))

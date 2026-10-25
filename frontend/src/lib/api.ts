@@ -87,6 +87,11 @@ export const api = {
   layouts: () => request<{ layouts: TrackLayout[] }>('GET', '/api/layouts'),
   layout: (name: string) =>
     request<TrackLayout>('GET', `/api/layouts/${encodeURIComponent(name)}`),
+  /** The named layout, or null if none is saved (uses the list: no 404 in the console). */
+  findLayout: async (name: string): Promise<TrackLayout | null> => {
+    const { layouts } = await request<{ layouts: TrackLayout[] }>('GET', '/api/layouts')
+    return layouts.find((l) => l.name === name) ?? null
+  },
   saveLayout: (layout: TrackLayout) =>
     request<TrackLayout>('PUT', `/api/layouts/${encodeURIComponent(layout.name)}`, layout),
   deleteLayout: (name: string) =>

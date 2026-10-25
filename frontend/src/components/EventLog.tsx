@@ -63,19 +63,23 @@ export function describeEvent(
   }
 }
 
-export function EventLog() {
+/** `fill`: stretch to the parent's height and scroll inside, showing a longer history. */
+export function EventLog({ fill = false }: { fill?: boolean }) {
   const t = useT()
   const f = useFormat()
   const events = useStore((s) => s.events)
   const cars = useStore((s) => s.race.cars)
-  const recent = events.slice(-8).reverse()
+  const recent = events.slice(fill ? -40 : -8).reverse()
   return (
-    <section className="rounded-lg border border-line bg-panel p-4" aria-label={t('events.title')}>
-      <h2 className="mb-2 text-sm font-bold uppercase tracking-widest text-dim">{t('events.title')}</h2>
+    <section
+      className={`rounded-lg border border-line bg-panel ${fill ? 'flex h-full min-h-0 flex-col p-3' : 'p-4'}`}
+      aria-label={t('events.title')}
+    >
+      <h2 className="mb-2 shrink-0 text-sm font-bold uppercase tracking-widest text-dim">{t('events.title')}</h2>
       {recent.length === 0 ? (
         <p className="text-dim">{t('events.empty')}</p>
       ) : (
-        <ul className="flex flex-col gap-1 text-sm">
+        <ul className={`flex flex-col gap-1 text-sm ${fill ? 'min-h-0 flex-1 overflow-y-auto' : ''}`}>
           {recent.map((e, i) => (
             <li key={`${e.at}-${i}`} data-testid="event-line">
               {describeEvent(e, cars, t, f.lap)}

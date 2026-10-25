@@ -13,10 +13,12 @@ const PILL: Record<string, string> = {
   connected: 'bg-go text-black',
   error: 'bg-signal text-white',
 }
-const field = 'rounded-md border border-line bg-panel-2 px-3 py-2'
+const fieldFull = 'rounded-md border border-line bg-panel-2 px-3 py-2'
+const fieldCompact = 'rounded-md border border-line bg-panel-2 px-2 py-1 text-sm'
 
-export function ConnectionBar() {
+export function ConnectionBar({ compact = false }: { compact?: boolean }) {
   const t = useT()
+  const field = compact ? fieldCompact : fieldFull
   const conn = useStore((s) => s.connection)
   const saved = useStore((s) => s.settings?.track)
   const [mode, setMode] = useState<TrackMode | null>(null)
@@ -56,8 +58,11 @@ export function ConnectionBar() {
   }
 
   return (
-    <section className="rounded-lg border border-line bg-panel p-3" aria-label={t('connection.title')}>
-      <div className="flex flex-wrap items-center gap-3">
+    <section
+      className={`rounded-lg border border-line bg-panel ${compact ? 'p-2' : 'p-3'}`}
+      aria-label={t('connection.title')}
+    >
+      <div className={`flex flex-wrap items-center ${compact ? 'gap-2' : 'gap-3'}`}>
         <span
           className={`rounded-full px-4 py-1 text-sm font-bold uppercase tracking-widest ${PILL[conn.status]}`}
           data-testid="connection-pill"
@@ -109,7 +114,7 @@ export function ConnectionBar() {
         )}
         {connected ? (
           <button
-            className="rounded-md bg-panel-2 px-4 py-2 font-bold uppercase disabled:opacity-40"
+            className={`rounded-md bg-panel-2 ${compact ? 'px-3 py-1 text-sm' : 'px-4 py-2'} font-bold uppercase disabled:opacity-40`}
             disabled={busy}
             onClick={() => void disconnect()}
           >
@@ -117,7 +122,7 @@ export function ConnectionBar() {
           </button>
         ) : (
           <button
-            className="rounded-md bg-go px-4 py-2 font-bold uppercase text-black disabled:opacity-40"
+            className={`rounded-md bg-go ${compact ? 'px-3 py-1 text-sm' : 'px-4 py-2'} font-bold uppercase text-black disabled:opacity-40`}
             disabled={busy || conn.status === 'connecting' || (needsAddress && !effAddress)}
             onClick={() => void connect()}
           >

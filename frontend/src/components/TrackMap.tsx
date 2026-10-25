@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useT } from '../i18n/useT'
-import { api, ApiError } from '../lib/api'
+import { api } from '../lib/api'
 import { cumulative, estimateS, pointAt, shortestDelta, tangentAt, toDisplay, type Pt } from '../lib/geometry'
 import { useStore } from '../lib/store'
 import type { RaceState, TrackLayout } from '../lib/types'
@@ -50,9 +50,9 @@ export function TrackMap({ className = '' }: { className?: string }) {
     let live = true
     const done = (s: MapState) => live && setResult({ name: layoutName, state: s })
     api
-      .layout(layoutName)
-      .then((layout) => done({ kind: 'ready', layout }))
-      .catch((e: unknown) => done(e instanceof ApiError && e.status === 404 ? { kind: 'missing' } : { kind: 'error' }))
+      .findLayout(layoutName)
+      .then((layout) => done(layout ? { kind: 'ready', layout } : { kind: 'missing' }))
+      .catch(() => done({ kind: 'error' }))
     return () => {
       live = false
     }

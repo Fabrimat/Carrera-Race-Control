@@ -13,7 +13,8 @@ const PRIORITY_BAR: Record<CommentaryLine['priority'], string> = {
   low: 'border-l-line',
 }
 
-export function CommentaryFeed() {
+/** `fill`: stretch to the parent's height and scroll the list inside (16:9 control panel). */
+export function CommentaryFeed({ fill = false }: { fill?: boolean }) {
   const t = useT()
   const lines = useStore((s) => s.commentary)
   const muted = useStore((s) => s.muted)
@@ -45,8 +46,11 @@ export function CommentaryFeed() {
   }
 
   return (
-    <section className="rounded-lg border border-line bg-panel p-4" aria-label={t('commentary.title')}>
-      <div className="mb-3 flex flex-wrap items-center gap-4">
+    <section
+      className={`rounded-lg border border-line bg-panel ${fill ? 'flex h-full min-h-0 flex-col p-3' : 'p-4'}`}
+      aria-label={t('commentary.title')}
+    >
+      <div className={`flex flex-wrap items-center ${fill ? 'mb-2 gap-x-4 gap-y-1' : 'mb-3 gap-4'}`}>
         <h2 className="text-sm font-bold uppercase tracking-widest text-dim">{t('commentary.title')}</h2>
         <button
           className={`rounded-md px-3 py-1 text-sm font-bold uppercase ${muted ? 'bg-signal text-white' : 'bg-panel-2'}`}
@@ -90,7 +94,7 @@ export function CommentaryFeed() {
       {lines.length === 0 ? (
         <p className="text-dim">{t('commentary.empty')}</p>
       ) : (
-        <ul className="flex max-h-80 flex-col gap-2 overflow-y-auto">
+        <ul className={`flex flex-col gap-2 overflow-y-auto ${fill ? 'min-h-0 flex-1' : 'max-h-80'}`}>
           {[...lines].reverse().map((l) => (
             <li
               key={l.id}

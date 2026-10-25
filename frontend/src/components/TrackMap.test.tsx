@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, render, screen, waitFor } from '@testing-library/react'
 import { TrackMap, raceClockNow, stepDot } from './TrackMap'
-import { api, ApiError } from '../lib/api'
+import { api } from '../lib/api'
 import { estimateS, pointAt, type Pt } from '../lib/geometry'
 import { useStore } from '../lib/store'
 import type { TrackLayout, TrackPosition } from '../lib/types'
@@ -65,11 +65,11 @@ describe('TrackMap', () => {
   })
 
   it('renders the path, sensors, start line and pit marker', async () => {
-    vi.spyOn(api, 'layout').mockResolvedValue(layout)
+    vi.spyOn(api, 'findLayout').mockResolvedValue(layout)
     useStore.setState({ race: raceState({ layout: 'Default' }) })
     render(<TrackMap />)
     expect(await screen.findByTestId('track-path')).toBeInTheDocument()
-    expect(api.layout).toHaveBeenCalledWith('Default')
+    expect(api.findLayout).toHaveBeenCalledWith('Default')
     expect(screen.getByTestId('start-line')).toBeInTheDocument()
     expect(screen.getByTestId('sensor-2')).toHaveTextContent('S2')
     expect(screen.getByTestId('sensor-3')).toHaveTextContent('S3')
@@ -78,7 +78,7 @@ describe('TrackMap', () => {
   })
 
   it('shows a friendly empty state with a link to the editor on 404', async () => {
-    vi.spyOn(api, 'layout').mockRejectedValue(new ApiError(404, null, 'layout_not_found'))
+    vi.spyOn(api, 'findLayout').mockResolvedValue(null)
     useStore.setState({ race: raceState({ layout: 'Nope' }) })
     render(<TrackMap />)
     expect(await screen.findByTestId('map-empty')).toHaveTextContent('Nope')
@@ -86,7 +86,7 @@ describe('TrackMap', () => {
   })
 
   it('refetches when the layout name changes', async () => {
-    const spy = vi.spyOn(api, 'layout').mockResolvedValue(layout)
+    const spy = vi.spyOn(api, 'findLayout').mockResolvedValue(layout)
     useStore.setState({ race: raceState({ layout: 'A' }) })
     render(<TrackMap />)
     await screen.findByTestId('track-path')
@@ -95,7 +95,7 @@ describe('TrackMap', () => {
   })
 
   it('places car dots at estimateS positions on the extrapolated race clock', async () => {
-    vi.spyOn(api, 'layout').mockResolvedValue(layout)
+    vi.spyOn(api, 'findLayout').mockResolvedValue(layout)
     const p = pos()
     useStore.setState({
       race: raceState({
@@ -121,7 +121,7 @@ describe('TrackMap', () => {
 
   it('uses display space (x * aspect) for dots and markers when aspect is not 1', async () => {
     const wide: TrackLayout = { ...layout, aspect: 2, sensors: [{ sensor: 2, s: 0.25 }], pit_s: 0.5 }
-    vi.spyOn(api, 'layout').mockResolvedValue(wide)
+    vi.spyOn(api, 'findLayout').mockResolvedValue(wide)
     useStore.setState({
       race: raceState({
         layout: 'Wide',
@@ -143,7 +143,7 @@ describe('TrackMap', () => {
   })
 
   it('hides cars without a position and dims stale ones with a ?', async () => {
-    vi.spyOn(api, 'layout').mockResolvedValue(layout)
+    vi.spyOn(api, 'findLayout').mockResolvedValue(layout)
     useStore.setState({
       race: raceState({
         layout: 'Default',
@@ -163,7 +163,7 @@ describe('TrackMap', () => {
   })
 
   it('cancels the animation frame on unmount', async () => {
-    vi.spyOn(api, 'layout').mockResolvedValue(layout)
+    vi.spyOn(api, 'findLayout').mockResolvedValue(layout)
     useStore.setState({ race: raceState({ layout: 'Default' }) })
     const { unmount } = render(<TrackMap />)
     await screen.findByTestId('track-map')
