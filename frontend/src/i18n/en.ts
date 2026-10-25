@@ -20,6 +20,17 @@ export const en = {
   'error.http_500': 'The backend reported an internal error.',
   'error.http_502': 'The backend is unavailable.',
   'error.http_503': 'The backend is unavailable.',
+  'error.not_connected': 'Not connected to a track. Connect first.',
+  'error.address_required': 'Enter the Bluetooth address or serial port first.',
+  'error.start_failed': 'The Control Unit did not accept the start command.',
+  'error.pace_car_failed': 'The Control Unit did not accept the pace car command.',
+  'error.connect_failed': 'Could not connect to the Control Unit.',
+  'error.connect_cancelled': 'Connection cancelled.',
+  'error.settings_invalid': 'Invalid settings: check the car names (max 40 characters), colors and addresses.',
+  'error.race_not_found': 'Race not found.',
+  'error.audio_not_found': 'Audio not available for this line.',
+  'error.forbidden_origin': 'Request refused: it did not come from this app.',
+  'error.invalid_request': 'Invalid request.',
 
   'connError.busy':
     'The Control Unit is busy. Close the Carrera phone app: the unit accepts only one Bluetooth connection at a time.',

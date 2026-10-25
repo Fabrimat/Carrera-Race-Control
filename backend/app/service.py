@@ -102,13 +102,40 @@ class Snapshot(BaseModel):
     muted: bool
 
 
-class ControllerError(Exception):
-    """A command could not be executed; ``status`` is the HTTP status for the API."""
+ErrorCode = Literal[
+    "not_connected",
+    "address_required",
+    "start_failed",
+    "pace_car_failed",
+    "connect_failed",
+    "connect_cancelled",
+    "settings_invalid",
+    "race_not_found",
+    "audio_not_found",
+    "forbidden_origin",
+    "invalid_request",
+    # Track errors (TrackErrorCode) are passed through as they are:
+    "busy",
+    "not_found",
+    "permission",
+    "bluetooth_off",
+    "timeout",
+    "unknown",
+]
 
-    def __init__(self, status: int, detail: str) -> None:
+
+class ControllerError(Exception):
+    """A command could not be executed.
+
+    ``status`` is the HTTP status, ``code`` a stable identifier the UI translates and
+    ``detail`` an English message for logs (see docs/PROTOCOL.md "Error codes").
+    """
+
+    def __init__(self, status: int, detail: str, code: ErrorCode = "unknown") -> None:
         super().__init__(detail)
         self.status = status
         self.detail = detail
+        self.code: ErrorCode = code
 
 
 # --------------------------------------------------------------------------- helpers
@@ -211,6 +238,8 @@ class RaceController:
         self._watchdog: asyncio.Task[None] | None = None
         self._tasks: list[asyncio.Task[None]] = []
         self._conn_lock = asyncio.Lock()
+        self._connecting_track: TrackInterface | None = None
+        self._connect_aborted = False
         self._dirty = asyncio.Event()
         self._last_status: Status | None = None
         self._sequence_seen = False
@@ -483,6 +512,9 @@ class RaceController:
                 continue
             log.info("track reconnected")
             self._last_status = None
+            # The CU may have been power-cycled (new timestamp domain): the engine checks the
+            # next Timer and re-anchors only if the domain changed.
+            self.engine.resync_clock()
             self._set_connection(status="connected", error=None, error_code=None)
             return
 
@@ -493,22 +525,42 @@ class RaceController:
     ) -> ConnectionInfo:
         address = (address or "").strip() or None
         if mode != "simulator" and address is None:
-            raise ControllerError(422, f"An address is required for {mode} mode")
+            raise ControllerError(
+                422, f"An address is required for {mode} mode", "address_required"
+            )
         async with self._conn_lock:
             await self._teardown()
+            if self.engine.phase in _ACTIVE:
+                # A new link is a new CU timestamp domain: close the race in progress.
+                log.info("closing the race in progress before connecting a new track")
+                await self._process_events(self.engine.stop())
+            self._connect_aborted = False
             self._set_connection(
                 status="connecting", mode=mode, address=address, error=None, error_code=None
             )
             try:
                 track = self._track_factory(mode, address)
+                self._connecting_track = track
                 await track.connect()
             except Exception as exc:
                 code = _error_code(exc)
                 detail = _describe(exc)
+                if self._connect_aborted:
+                    log.info("connect (%s) cancelled by disconnect", mode)
+                    self._set_connection(status="disconnected", error=None, error_code=None)
+                    raise ControllerError(
+                        409, "Connection cancelled by disconnect", "connect_cancelled"
+                    ) from exc
                 log.warning("connect (%s) failed: %s", mode, detail)
                 self._set_connection(status="error", error=detail, error_code=code)
                 # 409: the CU is held by someone else (e.g. the phone app); 503 otherwise.
-                raise ControllerError(409 if code == "busy" else 503, detail) from exc
+                raise ControllerError(
+                    409 if code == "busy" else 503,
+                    detail,
+                    code if code != "unknown" else "connect_failed",
+                ) from exc
+            finally:
+                self._connecting_track = None
             self._track = track
             self._reconnect_attempt = 0
             self._last_status = None
@@ -524,6 +576,13 @@ class RaceController:
             return self.connection
 
     async def disconnect(self) -> ConnectionInfo:
+        pending = self._connecting_track
+        if pending is not None:
+            # Abort a handshake in progress (CarreraTrack.close() cancels its connect()),
+            # otherwise we would wait for it under the lock (up to ~30 s with retries).
+            self._connect_aborted = True
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(pending.close(), CLOSE_TIMEOUT_S)
         async with self._conn_lock:
             await self._teardown()
             self._set_connection(status="disconnected", error=None, error_code=None)
@@ -561,7 +620,7 @@ class RaceController:
 
     def _require_track(self) -> TrackInterface:
         if self._track is None or self.connection.status != "connected":
-            raise ControllerError(409, "Not connected to a track")
+            raise ControllerError(409, "Not connected to a track", "not_connected")
         return self._track
 
     # ------------------------------------------------------------------ race commands
@@ -582,7 +641,9 @@ class RaceController:
         except Exception as exc:
             log.warning("start command failed: %s", _describe(exc))
             self._abort_start()
-            raise ControllerError(503, f"Start command failed: {_describe(exc)}") from exc
+            raise ControllerError(
+                503, f"Start command failed: {_describe(exc)}", "start_failed"
+            ) from exc
         self._watchdog = asyncio.create_task(self._start_watchdog(), name="start-watchdog")
         return self.engine.state
 
@@ -640,7 +701,9 @@ class RaceController:
         try:
             await track.toggle_pace_car()
         except Exception as exc:
-            raise ControllerError(503, f"Pace car command failed: {_describe(exc)}") from exc
+            raise ControllerError(
+                503, f"Pace car command failed: {_describe(exc)}", "pace_car_failed"
+            ) from exc
         if self.engine.phase in (RacePhase.RUNNING, RacePhase.PAUSED):
             events = self.engine.set_paused(self.engine.phase is RacePhase.RUNNING)
             if events:

@@ -6,10 +6,11 @@ import re
 from dataclasses import asdict
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Body, HTTPException, Query, Request, WebSocket
+from fastapi import APIRouter, Body, Query, Request, WebSocket
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
+from app.api.security import origin_allowed
 from app.config import TrackMode
 from app.race.export import race_to_csv, race_to_json
 from app.race.models import RaceConfig, RaceState, Settings
@@ -40,10 +41,6 @@ def controller(request: Request) -> RaceController:
     return request.app.state.controller  # type: ignore[no-any-return]
 
 
-def _http(exc: ControllerError) -> HTTPException:
-    return HTTPException(status_code=exc.status, detail=exc.detail)
-
-
 def _settings_response(ctl: RaceController) -> SettingsResponse:
     return SettingsResponse(
         **ctl.settings.model_dump(),
@@ -72,10 +69,7 @@ async def scan(request: Request) -> dict[str, Any]:
 
 @router.post("/api/connect", response_model=ConnectionInfo)
 async def connect(request: Request, body: ConnectRequest) -> ConnectionInfo:
-    try:
-        return await controller(request).connect(body.mode, body.address)
-    except ControllerError as exc:
-        raise _http(exc) from exc
+    return await controller(request).connect(body.mode, body.address)
 
 
 @router.post("/api/disconnect", response_model=ConnectionInfo)
@@ -90,10 +84,7 @@ async def disconnect(request: Request) -> ConnectionInfo:
 async def race_start(
     request: Request, config: Annotated[RaceConfig | None, Body()] = None
 ) -> RaceState:
-    try:
-        return await controller(request).start_race(config)
-    except ControllerError as exc:
-        raise _http(exc) from exc
+    return await controller(request).start_race(config)
 
 
 @router.post("/api/race/stop", response_model=RaceState)
@@ -108,10 +99,7 @@ async def race_reset(request: Request) -> RaceState:
 
 @router.post("/api/race/pace-car", response_model=RaceState)
 async def race_pace_car(request: Request) -> RaceState:
-    try:
-        return await controller(request).toggle_pace_car()
-    except ControllerError as exc:
-        raise _http(exc) from exc
+    return await controller(request).toggle_pace_car()
 
 
 # --------------------------------------------------------------------------- settings
@@ -148,7 +136,7 @@ def settings_errors(settings: Settings) -> list[str]:
 async def put_settings(request: Request, settings: Settings) -> SettingsResponse:
     errors = settings_errors(settings)
     if errors:
-        raise HTTPException(status_code=422, detail="; ".join(errors))
+        raise ControllerError(422, "; ".join(errors), "settings_invalid")
     ctl = controller(request)
     ctl.update_settings(settings)
     return _settings_response(ctl)
@@ -165,7 +153,7 @@ async def list_races(request: Request) -> dict[str, Any]:
 def _race_or_404(ctl: RaceController, race_id: int) -> dict[str, Any]:
     detail = ctl.store.get_race(race_id)
     if detail is None:
-        raise HTTPException(status_code=404, detail=f"Race {race_id} not found")
+        raise ControllerError(404, f"Race {race_id} not found", "race_not_found")
     return detail
 
 
@@ -201,7 +189,7 @@ async def export_race(
 async def commentary_audio(request: Request, line_id: str) -> StreamingResponse:
     stream = controller(request).director.audio_stream(line_id)
     if stream is None:
-        raise HTTPException(status_code=404, detail="No audio for this line")
+        raise ControllerError(404, "No audio for this line", "audio_not_found")
     return StreamingResponse(stream, media_type="audio/mpeg")
 
 
@@ -215,5 +203,9 @@ async def mute(request: Request, body: MuteRequest) -> dict[str, bool]:
 
 @router.websocket("/ws")
 async def websocket(ws: WebSocket) -> None:
+    if not origin_allowed(ws.headers, ws.app.state.allowed_origins):
+        # Cross-site WebSocket hijacking guard: refuse the handshake (HTTP 403).
+        await ws.close(code=1008)
+        return
     ctl: RaceController = ws.app.state.controller
     await ctl.hub.serve(ws, ctl.snapshot_message)

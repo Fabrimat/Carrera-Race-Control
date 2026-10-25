@@ -21,7 +21,7 @@ from app.race.models import (
     RaceStarted,
     default_cars,
 )
-from app.track.base import MODE_FUEL, MODE_PIT_LANE, Status, Timer
+from app.track.base import MODE_FUEL, MODE_PIT_LANE, TIMESTAMP_MODULO, Status, Timer
 
 
 class FakeClock:
@@ -572,3 +572,157 @@ def test_race_time_extrapolates_between_crossings():
     t0 = engine.state.race_time_ms
     clock.advance(3.0)
     assert engine.state.race_time_ms == t0 + 3000
+
+
+def _two_car_laps(engine: RaceEngine, clock: FakeClock) -> None:
+    """Cars 0 and 1 cross at race 0 / 500 ms (CU 1000 / 1500), then lap in 6000 ms each."""
+    cross(engine, 0, 1000)  # anchors cu_origin = 1000 at race 0
+    clock.advance(0.5)
+    cross(engine, 1, 1500)
+    clock.advance(5.5)
+    assert [e.lap_ms for e in of_type(cross(engine, 0, 7000), LapCompleted)] == [6000]
+    clock.advance(0.5)
+    assert [e.lap_ms for e in of_type(cross(engine, 1, 7500), LapCompleted)] == [6000]
+    assert engine.state.race_time_ms == 6500
+
+
+def test_resync_clock_same_domain_keeps_every_lap():
+    # Plain link drop: the CU kept running, its timestamps continue in the same domain.
+    engine, clock = make()
+    go(engine)
+    _two_car_laps(engine, clock)
+    seen = [engine.state.race_time_ms]
+    engine.resync_clock()
+    clock.advance(5.5)
+    seen.append(engine.state.race_time_ms)
+    laps = of_type(cross(engine, 0, 13_000), LapCompleted)
+    assert [(e.lap_ms, e.lap_number, e.race_time_ms) for e in laps] == [(6000, 2, 12_000)]
+    seen.append(engine.state.race_time_ms)
+    clock.advance(0.6)
+    laps = of_type(cross(engine, 1, 13_600), LapCompleted)
+    assert [(e.lap_ms, e.lap_number, e.race_time_ms) for e in laps] == [(6100, 2, 12_600)]
+    seen.append(engine.state.race_time_ms)
+    cars = {c.address: c for c in engine.state.cars}
+    assert cars[0].laps == 2 and cars[1].laps == 2
+    assert cars[0].lap_times == [6000, 6000] and cars[1].lap_times == [6000, 6100]
+    assert [lap.lap_ms for lap in engine.laps] == [6000, 6000, 6000, 6100]
+    assert seen == sorted(seen) and seen[-1] == 12_600
+
+
+def test_resync_clock_same_domain_after_long_drop_and_with_buffered_timer():
+    engine, clock = make()
+    go(engine)
+    _two_car_laps(engine, clock)
+    engine.resync_clock()
+    clock.advance(90)  # the link was down for 1.5 minutes, the clock kept extrapolating
+    # The first Timer after reconnect is an old buffered crossing (car 1, sector 2).
+    assert cross(engine, 1, 50_000, sector=2) == []
+    laps = of_type(cross(engine, 0, 97_000), LapCompleted)
+    assert [(e.lap_ms, e.race_time_ms) for e in laps] == [(90_000, 96_000)]
+    clock.advance(6)
+    laps = of_type(cross(engine, 1, 103_500), LapCompleted)
+    assert [(e.lap_ms, e.race_time_ms) for e in laps] == [(96_000, 102_500)]
+
+
+def test_resync_clock_same_domain_across_32bit_wraparound():
+    engine, clock = make()
+    go(engine)
+    near_wrap = TIMESTAMP_MODULO - 3000
+    cross(engine, 0, near_wrap)  # cu_origin just below 2**32
+    clock.advance(6)
+    assert [e.lap_ms for e in of_type(cross(engine, 0, 3000), LapCompleted)] == [6000]
+    engine.resync_clock()
+    clock.advance(6)
+    laps = of_type(cross(engine, 0, 9000), LapCompleted)  # still the same (wrapped) domain
+    assert [(e.lap_ms, e.race_time_ms) for e in laps] == [(6000, 12_000)]
+
+
+def test_resync_clock_power_cycle_reanchors_every_car_once():
+    engine, clock = make()
+    go(engine)
+    _two_car_laps(engine, clock)
+    seen = [engine.state.race_time_ms]
+    # The CU was power-cycled: its clock restarts near 0 in a new domain. ts 300 is a
+    # small backward jump from cu_origin (1000): ts_diff wraps to ~2**32, i.e. not intact.
+    engine.resync_clock()
+    clock.advance(6)
+    assert cross(engine, 0, 300) == []  # new reference, not a (bogus) lap
+    seen.append(engine.state.race_time_ms)
+    assert seen[-1] == 12_500
+    clock.advance(1)
+    assert cross(engine, 1, 1300) == []  # car 1 crosses later: re-anchored too, no lap
+    seen.append(engine.state.race_time_ms)
+    cars = {c.address: c for c in engine.state.cars}
+    assert cars[0].laps == 1 and cars[1].laps == 1
+    clock.advance(5)
+    laps = of_type(cross(engine, 0, 6300), LapCompleted)
+    assert [(e.lap_ms, e.lap_number, e.race_time_ms) for e in laps] == [(6000, 2, 18_500)]
+    seen.append(engine.state.race_time_ms)
+    clock.advance(1)
+    laps = of_type(cross(engine, 1, 7300), LapCompleted)
+    assert [(e.lap_ms, e.lap_number, e.race_time_ms) for e in laps] == [(6000, 2, 19_500)]
+    seen.append(engine.state.race_time_ms)
+    assert [lap.lap_ms for lap in engine.laps] == [6000, 6000, 6000, 6000]
+    race_times = [lap.race_time_ms for lap in engine.laps]
+    assert race_times == sorted(race_times)
+    assert seen == sorted(seen)
+
+
+def test_resync_clock_power_cycle_detected_by_a_non_lap_timer():
+    # The first Timer after the power-cycle is a pace-car pass: every car re-anchors later.
+    engine, clock = make()
+    go(engine)
+    _two_car_laps(engine, clock)
+    engine.resync_clock()
+    clock.advance(1)
+    assert cross(engine, 7, 200) == []
+    clock.advance(1)
+    assert cross(engine, 0, 1200) == []
+    assert cross(engine, 1, 1700) == []
+    clock.advance(6)
+    assert [e.lap_ms for e in of_type(cross(engine, 0, 7200), LapCompleted)] == [6000]
+    assert [e.lap_ms for e in of_type(cross(engine, 1, 7700), LapCompleted)] == [6000]
+
+
+def test_resync_clock_power_cycle_anchors_on_the_cu_synced_clock():
+    # The CU runs ahead of the host clock: the re-anchor must use the CU-synced race clock,
+    # not raw host time since go (which would move lap race times backwards).
+    engine, clock = make()
+    go(engine)
+    cross(engine, 0, 1000)
+    clock.advance(6)
+    cross(engine, 0, 9000)  # CU says 8000 ms, the host only 6000
+    assert engine.state.race_time_ms == 8000
+    engine.resync_clock()
+    clock.advance(1)
+    assert cross(engine, 0, 100) == []  # power-cycle: re-anchored at race 9000
+    assert engine.state.race_time_ms == 9000
+    clock.advance(6)
+    laps = of_type(cross(engine, 0, 6100), LapCompleted)
+    assert [(e.lap_ms, e.race_time_ms) for e in laps] == [(6000, 15_000)]
+
+
+def test_resync_clock_before_any_timer_is_a_noop():
+    engine, clock = make()
+    go(engine)
+    engine.resync_clock()
+    clock.advance(2)
+    assert cross(engine, 0, 5000) == []  # ordinary start pass, anchored at host elapsed
+    assert engine.state.race_time_ms == 2000
+    clock.advance(6)
+    laps = of_type(cross(engine, 0, 11_000), LapCompleted)
+    assert [(e.lap_ms, e.race_time_ms) for e in laps] == [(6000, 8000)]
+    clock.advance(6)
+    laps = of_type(cross(engine, 0, 17_000), LapCompleted)
+    assert [(e.lap_ms, e.race_time_ms) for e in laps] == [(6000, 14_000)]
+
+
+def test_resync_clock_ignores_cars_that_never_crossed():
+    engine, clock = make()
+    go(engine)
+    cross(engine, 0, 1000)
+    engine.resync_clock()
+    clock.advance(1)
+    assert cross(engine, 1, 50) == []  # car 1's very first crossing: ordinary start pass
+    clock.advance(6)
+    assert of_type(cross(engine, 1, 6050), LapCompleted)

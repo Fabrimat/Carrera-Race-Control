@@ -9,7 +9,9 @@ Backend listens on `http://127.0.0.1:8000`. In dev, Vite (port 5173) proxies
 
 ## REST
 
-All bodies are JSON. Errors: non-2xx with `{"detail": "<human readable message>"}`.
+All bodies are JSON. Errors: non-2xx with `{"detail": "<English message>", "code": "<code>"}`.
+`detail` is a string (for request validation errors, code `invalid_request`, it is
+FastAPI's list of problems); `code` is stable and translated by the UI (see "Error codes").
 
 | Method | Path | Body | Response |
 |---|---|---|---|
@@ -59,6 +61,34 @@ RaceDetail = Omit<RaceSummary, "laps"> & {   // `laps` is the lap list here, not
   laps: Lap[],                        // every lap, chronological
 }
 ```
+
+## Error codes
+
+| code | HTTP | when |
+|---|---|---|
+| `not_connected` | 409 | race / pace-car command without a connected track |
+| `address_required` | 422 | `POST /api/connect` in `ble`/`serial` mode without an address |
+| `connect_failed` | 503 | connecting failed for an unclassified reason |
+| `connect_cancelled` | 409 | a pending connect was aborted by `POST /api/disconnect` |
+| `busy`, `not_found`, `permission`, `bluetooth_off`, `timeout` | 409 (`busy`) / 503 | connecting failed; the track's `TrackError.code`, same values as `ConnectionInfo.error_code` |
+| `start_failed` | 503 | the CU did not accept the start command (the race is not started) |
+| `pace_car_failed` | 503 | the CU did not accept the pace car command |
+| `settings_invalid` | 422 | `PUT /api/settings`: more than 8 cars, duplicate addresses, name > 40 chars, color not `#RRGGBB` |
+| `race_not_found` | 404 | unknown race id (detail / export) |
+| `audio_not_found` | 404 | no audio for that commentary line |
+| `invalid_request` | 422 | the request body / query does not match the schema |
+| `forbidden_origin` | 403 | cross-origin state-changing request (see "Security") |
+
+The UI looks up `error.<code>` (then `connError.<code>`) and falls back to `detail`.
+
+## Security
+
+The API is unauthenticated and meant for `127.0.0.1`. POST/PUT/PATCH/DELETE requests are
+refused with 403 (`forbidden_origin`) when `Origin` is present and is neither the server's
+own origin nor in `CORS_ORIGINS` (default: the Vite dev server), or when
+`Sec-Fetch-Site: cross-site`. `/ws` closes the handshake (1008) for such origins. Requests
+without `Origin` (curl, scripts) are allowed. Only `Host` names in `ALLOWED_HOSTS` are
+answered (400 otherwise).
 
 ## Internationalisation
 

@@ -41,6 +41,7 @@ def make_config(tmp_path: Path, **overrides: Any) -> AppConfig:
         "commentary_lang": "it",
         "sim_cars": 3,
         "sim_time_scale": 50.0,
+        "allowed_hosts": "127.0.0.1,localhost,testserver",
     }
     values.update(overrides)
     return AppConfig(**values)
@@ -533,3 +534,116 @@ async def test_absent_simulated_cars_get_no_fuel_or_low_fuel(tmp_path: Path) -> 
     assert not [e for e in events if e.type in ("low_fuel", "pit_entry") and e.address >= 2]
     texts = " ".join(line.text for line in hub(ctl).of("commentary"))
     assert "Car 3" not in texts and "Car 4" not in texts
+
+
+async def test_connect_while_race_active_closes_the_race(tmp_path: Path) -> None:
+    store = RaceStore(":memory:")
+    tracks = [FakeTrack(), FakeTrack()]
+    ctl = make_controller(tmp_path, store=store, start_fallback_s=0.01)
+    ctl._track_factory = lambda mode, address: tracks.pop(0)
+
+    async def body() -> None:
+        await ctl.connect("simulator", None, persist=False)
+        await ctl.start_race()
+        await wait_for(lambda: ctl.engine.phase is RacePhase.RUNNING)
+        race_id = ctl.engine.race_id
+        await ctl.connect("serial", "COM3", persist=False)
+        assert ctl.engine.phase is RacePhase.FINISHED
+        assert store.get_race(race_id)["finished_at"] is not None
+        assert ctl.connection.status == "connected" and ctl.connection.mode == "serial"
+
+    await running(ctl, body)
+    assert [e.type for e in hub(ctl).of("event")][-1] == "race_finished"
+
+
+async def test_reconnect_same_cu_domain_loses_no_lap(tmp_path: Path) -> None:
+    store = RaceStore(":memory:")
+    script: list[Any] = [status(s) for s in (1, 2, 3, 4, 5, 6, 7, 0)]
+    script += [Timer(0, 4_000_000), Timer(0, 4_006_000)]  # one lap before the drop
+    track = FakeTrack(script)
+    ctl = make_controller(tmp_path, track, store=store, backoff=(0.01,))
+
+    async def body() -> None:
+        await ctl.connect("simulator", None, persist=False)
+        await wait_for(lambda: len(ctl.engine.laps) == 1)
+        # Plain BLE drop: the CU keeps running, its timestamps continue in the same domain.
+        track.items.put_nowait(TrackDisconnected("link lost"))
+        track.items.put_nowait(Timer(0, 4_012_500))
+        track.items.put_nowait(Timer(0, 4_018_700))
+        await wait_for(lambda: len(ctl.engine.laps) == 3)
+        assert [lap.lap_ms for lap in ctl.engine.laps] == [6000, 6500, 6200]
+        assert track.connect_calls == 2
+        cars = {c.address: c for c in ctl.engine.state.cars}
+        assert cars[0].laps == 3
+        laps = store.get_race(ctl.engine.race_id)["laps"]
+        assert [lap["lap_ms"] for lap in laps] == [6000, 6500, 6200]
+
+    await running(ctl, body)
+
+
+async def test_reconnect_after_cu_power_cycle_resyncs_the_clock(tmp_path: Path) -> None:
+    store = RaceStore(":memory:")
+    script: list[Any] = [status(s) for s in (1, 2, 3, 4, 5, 6, 7, 0)]
+    script += [Timer(0, 4_000_000), Timer(0, 4_006_000)]  # one lap in the old domain
+    track = FakeTrack(script)
+    ctl = make_controller(tmp_path, track, store=store, backoff=(0.01,))
+
+    async def body() -> None:
+        await ctl.connect("simulator", None, persist=False)
+        await wait_for(lambda: len(ctl.engine.laps) == 1)
+        # CU power-cycled: link drops, clock restarts near 0.
+        track.items.put_nowait(TrackDisconnected("power cycle"))
+        track.items.put_nowait(Timer(0, 500))
+        track.items.put_nowait(Timer(0, 6800))
+        await wait_for(lambda: len(ctl.engine.laps) == 2)
+        assert [lap.lap_ms for lap in ctl.engine.laps] == [6000, 6300]
+        assert {c.address: c.laps for c in ctl.engine.state.cars}[0] == 2
+        assert track.connect_calls == 2
+        laps = store.get_race(ctl.engine.race_id)["laps"]
+        assert [lap["lap_ms"] for lap in laps] == [6000, 6300]
+
+    await running(ctl, body)
+
+
+async def test_disconnect_aborts_a_pending_connect(tmp_path: Path) -> None:
+    class HangingTrack(FakeTrack):
+        def __init__(self) -> None:
+            super().__init__()
+            self.closed = asyncio.Event()
+
+        async def connect(self) -> None:
+            await self.closed.wait()  # like a BLE handshake that never answers
+            raise TrackConnectionError("Connection cancelled: track was closed")
+
+        async def close(self) -> None:
+            await super().close()
+            self.closed.set()
+
+    ctl = make_controller(tmp_path, HangingTrack())
+
+    async def body() -> None:
+        pending = asyncio.create_task(ctl.connect("ble", "AA:BB:CC:DD:EE:FF"))
+        await wait_for(lambda: ctl.connection.status == "connecting")
+        started = time.monotonic()
+        info = await ctl.disconnect()
+        assert time.monotonic() - started < 1
+        assert info.status == "disconnected"
+        with pytest.raises(ControllerError) as err:
+            await pending
+        assert err.value.code == "connect_cancelled"
+        assert ctl.connection.status == "disconnected"
+
+    await running(ctl, body)
+
+
+async def test_controller_errors_carry_codes(tmp_path: Path) -> None:
+    ctl = make_controller(tmp_path, FakeTrack(connect_errors=1))
+    with pytest.raises(ControllerError) as err:
+        await ctl.start_race()
+    assert err.value.code == "not_connected"
+    with pytest.raises(ControllerError) as err:
+        await ctl.connect("ble", "")
+    assert err.value.code == "address_required"
+    with pytest.raises(ControllerError) as err:
+        await ctl.connect("serial", "COM1")
+    assert err.value.code == "timeout"  # the track's own code is passed through

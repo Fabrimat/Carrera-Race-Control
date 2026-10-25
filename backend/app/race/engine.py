@@ -10,7 +10,10 @@ Design notes
   is mapped to race time through ``cu_origin``, anchored once at the first Timer after go:
   ``cu_origin = ts - host_ms_since_go``. Between crossings the race clock is extrapolated from
   the injected host clock (monotonic clamp: it never goes backwards; crossings only re-sync it
-  forward). Before the first Timer the race clock is host time elapsed since go.
+  forward). Before the first Timer the race clock is host time elapsed since go. After a
+  reconnect (``resync_clock``) the next Timer is checked against the race clock: if the CU
+  was power-cycled (new timestamp domain) ``cu_origin`` is re-anchored on the race clock and
+  each car's next crossing only sets a new reference; a plain link drop changes nothing.
 * **Phases.** ``prepare()`` -> STARTING; the engine goes RUNNING when it sees ``Status.start``
   reach 0 or 7 after having been 1..6. Timers in STARTING/IDLE/FINISHED are ignored. Laps keep
   counting (and events keep flowing) while PAUSED: in Carrera the pace car does not stop timing.
@@ -119,6 +122,8 @@ class RaceEngine:
         self._sequence_seen = False
         self._go_host: float | None = None
         self._cu_origin: int | None = None
+        self._resync: set[int] = set()  # cars whose next crossing re-anchors (after resync)
+        self._pending_resync = False  # check the CU timestamp domain on the next Timer
         self._race_ms = 0
         self._sync_race_ms = 0
         self._sync_host: float | None = None
@@ -136,6 +141,16 @@ class RaceEngine:
     def reset(self) -> None:
         self._reset_runtime()
         self._phase = RacePhase.IDLE
+
+    def resync_clock(self) -> None:
+        """The link to the CU was re-established: verify its timestamp domain on the next Timer.
+
+        A plain link drop keeps the CU running, so its timestamps continue in the same domain
+        and laps keep counting normally. If the CU was power-cycled its clock restarted: the
+        next Timer then lands far from the race clock, ``cu_origin`` is re-anchored and each
+        car's next crossing only sets a new reference (no lap). See :meth:`_check_resync`.
+        """
+        self._pending_resync = True
 
     def update_cars(self, cars: list[CarConfig]) -> None:
         """Names/colors may change at any time; runtime data of existing cars is kept."""
@@ -191,12 +206,37 @@ class RaceEngine:
             candidate = self._sync_race_ms + (now - self._sync_host) * 1000
         self._race_ms = max(self._race_ms, int(candidate))
 
+    def _anchor(self, ts: int) -> None:
+        """Map ``ts`` to the current race clock (call :meth:`_advance_clock` first)."""
+        self._cu_origin = (ts - self._race_ms) % TIMESTAMP_MODULO
+
+    def _check_resync(self, ts: int) -> None:
+        """First Timer after :meth:`resync_clock`: keep or re-anchor the CU timestamp domain.
+
+        The domain is intact when ``ts`` maps to (about) the current race clock. Otherwise the
+        CU restarted: re-anchor ``cu_origin`` on the CU-synced race clock (so the clock stays
+        monotonic and host/CU skew is not reintroduced) and make every car that has crossed
+        re-anchor its reference on its next crossing (including the car of this Timer).
+        """
+        self._pending_resync = False
+        if self._cu_origin is None:  # no Timer seen yet: the first one anchors normally
+            return
+        self._advance_clock()
+        diff = ts_diff(ts, self._cu_origin)  # unsigned: a small backward jump is ~2**32
+        tolerance = max(60_000, 2 * self.config.max_lap_ms)
+        if diff < _HALF_MODULO and abs(diff - self._race_ms) <= tolerance:
+            return
+        self._anchor(ts)
+        self._resync |= {a for a, c in self._cars.items() if c.crossed}
+
     def _race_time_for(self, ts: int) -> int:
         """Race time of a CU timestamp; anchors ``cu_origin`` on the first call."""
         assert self._go_host is not None
+        if self._pending_resync:
+            self._check_resync(ts)
         if self._cu_origin is None:
-            host_ms = int((self._clock() - self._go_host) * 1000)
-            self._cu_origin = (ts - host_ms) % TIMESTAMP_MODULO
+            self._advance_clock()  # before the first Timer: host time elapsed since go
+            self._anchor(ts)
         diff = ts_diff(ts, self._cu_origin)
         if diff >= _HALF_MODULO:  # crossing older than the anchor (buffered): clamp
             diff = 0
@@ -397,6 +437,10 @@ class RaceEngine:
         if car.last_ts is None:  # start pass: not a lap
             car.last_ts = msg.timestamp
             car.total_time_ms = race_t
+            return []
+        if address in self._resync:  # first crossing after a CU restart: new reference
+            self._resync.discard(address)
+            car.last_ts = msg.timestamp
             return []
 
         lap_ms = ts_diff(msg.timestamp, car.last_ts)

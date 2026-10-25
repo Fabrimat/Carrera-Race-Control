@@ -1,14 +1,28 @@
 import { ApiError } from './api'
 import { tNow, useStore } from './store'
-import type { TFunction } from '../i18n'
+import { dictionaries, type TFunction, type TKey } from '../i18n'
 import type { ConnectionInfo } from './types'
 
 const KNOWN_STATUS = new Set([404, 422, 500, 502, 503])
 
-/** Translated message for a failed REST call; falls back to the backend `detail`. */
+/** Dictionary key for a backend error code: `error.<code>`, else `connError.<code>`. */
+export function errorCodeKey(code: string | null | undefined): TKey | null {
+  if (!code) return null
+  for (const key of [`error.${code}`, `connError.${code}`]) {
+    if (key in dictionaries.en) return key as TKey
+  }
+  return null
+}
+
+/**
+ * Translated message for a failed REST call: the backend `code` when known, then a
+ * generic message per HTTP status, falling back to the backend `detail`.
+ */
 export function apiErrorMessage(err: unknown, t: TFunction): string {
   if (err instanceof ApiError) {
     if (err.status === 0) return t('error.offline')
+    const key = errorCodeKey(err.code)
+    if (key) return t(key)
     if (KNOWN_STATUS.has(err.status) && !err.detail) {
       return t(`error.http_${err.status}` as 'error.http_404')
     }

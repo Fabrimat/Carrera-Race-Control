@@ -258,6 +258,7 @@ def test_keys_from_environment_are_not_leaked(
     monkeypatch.setenv("ELEVENLABS_API_KEY", SECRET_EL)
     monkeypatch.setenv("ANTHROPIC_API_KEY", SECRET_ANT)
     monkeypatch.setenv("DATA_DIR", str(tmp_path / "envdata"))
+    monkeypatch.setenv("ALLOWED_HOSTS", "testserver")
     config = AppConfig(_env_file=None)
     assert config.has_elevenlabs_key() and config.has_anthropic_key()
     assert SECRET_EL not in repr(config)
@@ -452,3 +453,102 @@ def test_csv_export_neutralises_formulas() -> None:
     ]
     assert names[6] == "Car 7"
     assert safe_cell("Ferrari") == "Ferrari"
+
+
+# --------------------------------------------------------------------------- error codes
+
+
+def test_rest_errors_have_stable_codes(make_client) -> None:
+    client = make_client()
+    r = client.post("/api/race/start")
+    assert r.status_code == 409
+    assert r.json() == {"detail": "Not connected to a track", "code": "not_connected"}
+    assert client.post("/api/race/pace-car").json()["code"] == "not_connected"
+
+    r = client.post("/api/connect", json={"mode": "serial", "address": ""})
+    assert r.status_code == 422 and r.json()["code"] == "address_required"
+    assert isinstance(r.json()["detail"], str)
+
+    r = client.post("/api/connect", json={"mode": "bogus"})
+    assert r.status_code == 422 and r.json()["code"] == "invalid_request"
+
+    r = client.get("/api/races/42")
+    assert r.status_code == 404 and r.json()["code"] == "race_not_found"
+    assert client.get("/api/races/42/export").json()["code"] == "race_not_found"
+    assert client.get("/api/commentary/x/audio").json()["code"] == "audio_not_found"
+
+    body = client.get("/api/settings").json()
+    body["cars"][0]["color"] = "blue"
+    r = client.put("/api/settings", json=body)
+    assert r.status_code == 422 and r.json()["code"] == "settings_invalid"
+
+
+def test_track_error_code_is_passed_through(make_client) -> None:
+    class BusyTrack(FakeTrack):
+        async def connect(self) -> None:
+            raise TrackConnectionError("Control Unit busy", code="busy")
+
+    client = make_client(track_factory=lambda mode, address: BusyTrack())
+    r = client.post("/api/connect", json={"mode": "ble", "address": "AA:BB:CC:DD:EE:FF"})
+    assert r.status_code == 409
+    assert r.json() == {"detail": "Control Unit busy", "code": "busy"}
+
+
+# --------------------------------------------------------------------------- security
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {"Origin": "http://evil.example"},
+        {"Origin": "null"},
+        {"Origin": "http://127.0.0.1:5173", "Sec-Fetch-Site": "cross-site"},
+        {"Sec-Fetch-Site": "cross-site"},
+    ],
+)
+def test_cross_origin_unsafe_requests_are_refused(make_client, headers) -> None:
+    client = make_client()
+    r = client.post("/api/commentary/mute", json={"muted": True}, headers=headers)
+    assert r.status_code == 403
+    assert r.json()["code"] == "forbidden_origin"
+    r = client.put("/api/settings", json={}, headers=headers)
+    assert r.status_code == 403
+    assert client.get("/api/state").json()["muted"] is False
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {},  # curl / scripts
+        {"Origin": "http://testserver"},  # same origin (served frontend)
+        {"Origin": "http://127.0.0.1:5173", "Sec-Fetch-Site": "same-origin"},  # Vite proxy
+        {"Origin": "http://localhost:5173"},
+    ],
+)
+def test_same_origin_and_originless_requests_pass(make_client, headers) -> None:
+    client = make_client()
+    r = client.post("/api/commentary/mute", json={"muted": True}, headers=headers)
+    assert r.status_code == 200, r.text
+    # Reads are never blocked (CORS keeps other sites from reading them).
+    assert client.get("/api/state", headers={"Origin": "http://evil.example"}).status_code == 200
+
+
+def test_cross_origin_websocket_is_rejected(make_client) -> None:
+    from starlette.websockets import WebSocketDisconnect
+
+    client = make_client()
+    with pytest.raises(WebSocketDisconnect) as err:
+        with client.websocket_connect("/ws", headers={"Origin": "http://evil.example"}) as ws:
+            ws.receive_json()
+    assert err.value.code == 1008
+    for origin in ("http://127.0.0.1:5173", "http://testserver"):
+        with client.websocket_connect("/ws", headers={"Origin": origin}) as ws:
+            assert ws.receive_json()["type"] == "snapshot"
+
+
+def test_unknown_host_is_rejected(make_client) -> None:
+    client = make_client()
+    r = client.get("/api/state", headers={"Host": "attacker.example"})
+    assert r.status_code == 400
+    assert client.get("/api/state", headers={"Host": "127.0.0.1:8000"}).status_code == 200
+    assert client.get("/api/state", headers={"Host": "localhost:8000"}).status_code == 200

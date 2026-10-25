@@ -11,15 +11,21 @@ import type {
   TrackMode,
 } from './types'
 
-/** status 0 = network failure (backend unreachable). */
+/**
+ * status 0 = network failure (backend unreachable). `code` is the backend's stable error
+ * code (docs/PROTOCOL.md "Error codes"), translated by `apiErrorMessage`; `detail` is the
+ * English message, used as a fallback.
+ */
 export class ApiError extends Error {
   status: number
   detail: string | null
-  constructor(status: number, detail: string | null) {
+  code: string | null
+  constructor(status: number, detail: string | null, code: string | null = null) {
     super(detail ?? `HTTP ${status}`)
     this.name = 'ApiError'
     this.status = status
     this.detail = detail
+    this.code = code
   }
 }
 
@@ -36,14 +42,16 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   }
   if (!res.ok) {
     let detail: string | null = null
+    let code: string | null = null
     try {
       const j = await res.json()
       if (typeof j?.detail === 'string') detail = j.detail
       else if (j?.detail !== undefined) detail = JSON.stringify(j.detail)
+      if (typeof j?.code === 'string') code = j.code
     } catch {
       /* not JSON */
     }
-    throw new ApiError(res.status, detail)
+    throw new ApiError(res.status, detail, code)
   }
   return (await res.json()) as T
 }

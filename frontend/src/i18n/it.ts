@@ -21,6 +21,17 @@ export const it: Messages = {
   'error.http_500': 'Il backend ha segnalato un errore interno.',
   'error.http_502': 'Il backend non è disponibile.',
   'error.http_503': 'Il backend non è disponibile.',
+  'error.not_connected': 'Nessuna pista connessa. Connettiti prima.',
+  'error.address_required': "Inserisci prima l'indirizzo Bluetooth o la porta seriale.",
+  'error.start_failed': 'La Control Unit non ha accettato il comando di partenza.',
+  'error.pace_car_failed': 'La Control Unit non ha accettato il comando della safety car.',
+  'error.connect_failed': 'Impossibile connettersi alla Control Unit.',
+  'error.connect_cancelled': 'Connessione annullata.',
+  'error.settings_invalid': 'Impostazioni non valide: controlla nomi delle auto (max 40 caratteri), colori e indirizzi.',
+  'error.race_not_found': 'Gara non trovata.',
+  'error.audio_not_found': 'Audio non disponibile per questa frase.',
+  'error.forbidden_origin': "Richiesta rifiutata: non proviene da questa app.",
+  'error.invalid_request': 'Richiesta non valida.',
 
   'connError.busy':
     "La Control Unit è occupata. Chiudi l'app Carrera sul telefono: la centralina accetta una sola connessione Bluetooth alla volta.",

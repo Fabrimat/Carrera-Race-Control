@@ -11,14 +11,19 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.api.routes import router
+from app.api.security import CSRFMiddleware, normalise_origins
 from app.config import REPO_ROOT, AppConfig
 from app.race.store import RaceStore
-from app.service import RaceController
+from app.service import ControllerError, RaceController
 
 log = logging.getLogger(__name__)
 
@@ -51,6 +56,9 @@ def create_app(
             log.info("Carrera race control stopped")
 
     app = FastAPI(title="Carrera Race Control", lifespan=lifespan)
+    allowed_origins = normalise_origins(cfg.cors_origin_list)
+    app.state.allowed_origins = allowed_origins
+    # Added innermost first: TrustedHost runs first, then CSRF, then CORS.
     app.add_middleware(
         CORSMiddleware,
         allow_origins=cfg.cors_origin_list,
@@ -58,6 +66,20 @@ def create_app(
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    app.add_middleware(CSRFMiddleware, allowed_origins=allowed_origins)
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=cfg.allowed_host_list)
+
+    @app.exception_handler(ControllerError)
+    async def controller_error(request: Request, exc: ControllerError) -> JSONResponse:
+        return JSONResponse({"detail": exc.detail, "code": exc.code}, status_code=exc.status)
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
+        return JSONResponse(
+            {"detail": jsonable_encoder(exc.errors()), "code": "invalid_request"},
+            status_code=422,
+        )
+
     app.include_router(router)
     if frontend_dist is not None and (frontend_dist / "index.html").is_file():
         # Registered last: API and WebSocket routes take precedence over the static mount.

@@ -45,6 +45,8 @@ class AppConfig(BaseSettings):
 
     # Comma-separated list of origins allowed by CORS (dev: the Vite server).
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+    # Comma-separated Host names accepted (DNS-rebinding guard); ports are ignored.
+    allowed_hosts: str = "127.0.0.1,localhost"
 
     @property
     def db_path(self) -> Path:
@@ -57,6 +59,10 @@ class AppConfig(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+
+    @property
+    def allowed_host_list(self) -> list[str]:
+        return [h.strip() for h in self.allowed_hosts.split(",") if h.strip()]
 
     @property
     def track_mode_explicit(self) -> bool:
