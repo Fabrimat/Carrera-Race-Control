@@ -3,6 +3,8 @@ import { detectLanguage, translate, type Params, type TKey } from '../i18n'
 import type {
   CommentaryLine,
   ConnectionInfo,
+  Driver,
+  EventState,
   Language,
   RaceEvent,
   RaceState,
@@ -64,6 +66,12 @@ export interface LiveState {
   events: RaceEvent[]
   muted: boolean
   stoppedLineId: string | null
+  // Event mode: controller address (as string) -> driver id, kept in sync by `driver_assigned`.
+  assignments: Record<string, string>
+  armedDriverId: string | null
+  armedUntil: string | null
+  /** The latest `driver_assigned` event, for "assigned by crossing" feedback. */
+  lastAssignment: { address: number; driver_id: string; driver_name: string; method: string; at: string } | null
 }
 
 export interface AppState extends LiveState {
@@ -71,6 +79,11 @@ export interface AppState extends LiveState {
   settings: SettingsResponse | null
   language: Language
   toasts: Toast[]
+  drivers: Driver[]
+  setDrivers: (d: Driver[]) => void
+  setEventState: (e: EventState) => void
+  setAssignments: (a: Record<string, string>) => void
+  setArmed: (driverId: string | null, until: string | null) => void
   setWs: (s: WsStatus) => void
   applyMessage: (m: WsMessage) => void
   setSettings: (s: SettingsResponse) => void
@@ -95,8 +108,24 @@ export function reduceMessage(s: LiveState, m: WsMessage): Partial<LiveState> {
       return { race: m.data }
     case 'connection':
       return { connection: m.data }
-    case 'event':
-      return { events: [...s.events, m.data].slice(-MAX_EVENTS) }
+    case 'event': {
+      const events = [...s.events, m.data].slice(-MAX_EVENTS)
+      if (m.data.type !== 'driver_assigned') return { events }
+      const e = m.data
+      return {
+        events,
+        assignments: { ...s.assignments, [String(e.address)]: e.driver_id },
+        armedDriverId: e.method === 'crossing' ? null : s.armedDriverId,
+        armedUntil: e.method === 'crossing' ? null : s.armedUntil,
+        lastAssignment: {
+          address: e.address,
+          driver_id: e.driver_id,
+          driver_name: e.driver_name,
+          method: e.method,
+          at: e.at,
+        },
+      }
+    }
     case 'commentary':
       if (s.commentary.some((l) => l.id === m.data.id)) return {}
       return { commentary: [...s.commentary, m.data].slice(-MAX_COMMENTARY) }
@@ -116,6 +145,15 @@ export const useStore = create<AppState>((set, get) => ({
   events: [],
   muted: false,
   stoppedLineId: null,
+  assignments: {},
+  armedDriverId: null,
+  armedUntil: null,
+  lastAssignment: null,
+  drivers: [],
+  setDrivers: (drivers) => set({ drivers }),
+  setEventState: (e) => set({ assignments: e.assignments, armedDriverId: e.armed_driver_id, armedUntil: e.armed_until }),
+  setAssignments: (assignments) => set({ assignments }),
+  setArmed: (armedDriverId, armedUntil) => set({ armedDriverId, armedUntil }),
   ws: 'connecting',
   settings: null,
   language: detectLanguage(),

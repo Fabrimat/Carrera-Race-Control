@@ -240,7 +240,7 @@ export function Leaderboard({
                   style={{ background: c.color }}
                   aria-hidden
                 />
-                <CarName address={c.address} name={c.name} editable={editable} />
+                <CarName address={c.address} name={c.driver_name || c.name} editable={editable && !c.driver_name} />
                 {c.in_pit && (
                   <span
                     data-testid="pit-badge"

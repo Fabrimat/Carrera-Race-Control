@@ -9,7 +9,10 @@ import {
   isFinalLap,
   type BannerContext,
 } from '../../lib/tvBanners'
+import { api } from '../../lib/api'
+import { photoVersion } from '../../lib/drivers'
 import { useStore } from '../../lib/store'
+import type { CarState } from '../../lib/types'
 
 export interface BannerView {
   banner: Banner
@@ -21,6 +24,13 @@ export interface BannerView {
  * and tracks which one is on screen. Existing events are marked as seen on mount, so opening
  * the TV window never replays history.
  */
+/** Photo URL of the driver assigned to a car, if that driver has one. */
+function photoFor(car: CarState): string | null {
+  if (!car.driver_id) return null
+  const d = useStore.getState().drivers.find((x) => x.id === car.driver_id)
+  return d?.has_photo ? api.driverPhotoUrl(d.id, photoVersion(d.id)) : null
+}
+
 export function useBanners(codes: Map<number, string>): BannerView | null {
   const t = useT()
   const f = useFormat()
@@ -29,7 +39,7 @@ export function useBanners(codes: Map<number, string>): BannerView | null {
   const [clock, setClock] = useState(0)
   const ctx = useRef<BannerContext | null>(null)
   useEffect(() => {
-    ctx.current = { cars: useStore.getState().race.cars, codes, t, lap: f.lap }
+    ctx.current = { cars: useStore.getState().race.cars, codes, t, lap: f.lap, photoFor }
   })
 
   useEffect(() => {

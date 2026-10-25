@@ -22,6 +22,7 @@ function LowerThird({ banner, exiting }: BannerView) {
       role="status"
       style={banner.color ? { ['--car' as string]: banner.color } : undefined}
     >
+      {banner.photo && <img className="tv-banner-photo" data-testid="tv-banner-photo" src={banner.photo} alt="" />}
       <span className="tv-banner-tag" aria-hidden>{GLYPH[banner.kind]}</span>
       <span className="tv-banner-body">
         <span className="tv-banner-title">{banner.title}</span>
@@ -40,7 +41,7 @@ function Results({ banner }: { banner: Banner }) {
           <span className="tv-pos">{r.pos}</span>
           <span className="tv-bar" aria-hidden />
           <span className="tv-code">{r.code}</span>
-          <span className="tv-podium-name">{r.name}</span>
+          <span className="tv-podium-name">{r.photo && <img className="tv-podium-photo" src={r.photo} alt="" />}{r.name}</span>
           <span className="tv-podium-best">
             <small>{t('tv.results.best')}</small>
             {r.best}

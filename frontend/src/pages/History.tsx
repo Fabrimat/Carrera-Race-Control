@@ -209,7 +209,7 @@ export function HistoryDetail({ id }: { id: number }) {
                   <td className="num p-2">{c.position ?? '–'}</td>
                   <td className="p-2">
                     <span className="mr-2 inline-block h-3 w-3 rounded-full" style={{ background: c.color }} />
-                    {c.name}
+                    {c.driver_name || c.name}
                   </td>
                   <td className="num p-2 text-right">{c.laps}</td>
                   <td className="num p-2 text-right">{f.lap(c.best_lap_ms)}</td>

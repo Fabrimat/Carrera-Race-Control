@@ -1,7 +1,9 @@
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { CommentaryFeed } from '../components/CommentaryFeed'
 import { ConnectionBar } from '../components/ConnectionBar'
 import { EventLog } from '../components/EventLog'
+import { Modal } from '../components/Modal'
+import { WhoDriving } from '../components/WhoDriving'
 import { LazyLapChart } from '../components/LazyLapChart'
 import { Leaderboard } from '../components/Leaderboard'
 import { TrackMap } from '../components/TrackMap'
@@ -38,6 +40,7 @@ function Panel({ title, children, className = '' }: { title: string; children: R
 export function Dashboard() {
   const t = useT()
   const race = useStore((s) => s.race)
+  const [who, setWho] = useState(false)
   const starting = race.phase === 'starting'
   const lights = race.phase === 'starting' || race.start_light !== 0
 
@@ -58,6 +61,14 @@ export function Dashboard() {
         >
           <RaceClock race={race} />
           {lights && <StartLights light={race.start_light} />}
+          <button
+            type="button"
+            data-testid="open-who"
+            className="rounded-md border border-line bg-panel-2 px-3 py-1 text-sm font-bold uppercase tracking-wide hover:border-amber"
+            onClick={() => setWho(true)}
+          >
+            {t('who.open')}
+          </button>
           <button
             type="button"
             data-testid="open-tv"
@@ -106,6 +117,19 @@ export function Dashboard() {
           </div>
         </div>
       </div>
+
+      {who && (
+        <Modal label={t('who.title')} onClose={() => setWho(false)}>
+          <WhoDriving />
+          <button
+            type="button"
+            className="mt-3 min-h-11 self-end rounded-md border border-line px-5 font-bold uppercase"
+            onClick={() => setWho(false)}
+          >
+            {t('who.close')}
+          </button>
+        </Modal>
+      )}
     </div>
   )
 }

@@ -91,8 +91,8 @@ export function TvMode() {
       deriveDriverCodes(
         race.cars.map((c) => ({
           address: c.address,
-          name: c.name,
-          nickname: settingsCars?.find((s) => s.address === c.address)?.nickname ?? null,
+          name: c.driver_name || c.name,
+          nickname: c.driver_name ? null : (settingsCars?.find((s) => s.address === c.address)?.nickname ?? null),
         })),
       ),
     [race.cars, settingsCars],

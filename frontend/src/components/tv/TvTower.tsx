@@ -104,7 +104,7 @@ export function TvTower({ race, codes, mode, reduced }: Props) {
             >
               <span role="cell" className="tv-pos">{c.position ?? '–'}</span>
               <span className="tv-bar" aria-hidden />
-              <span role="cell" className="tv-code" data-testid="tv-code" title={c.name}>
+              <span role="cell" className="tv-code" data-testid="tv-code" title={c.driver_name || c.name}>
                 {codes.get(c.address) ?? ''}
               </span>
               <span className="tv-mid">

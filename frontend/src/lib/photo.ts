@@ -17,6 +17,9 @@ export function base64Bytes(b64: string): number {
   return Math.floor((b64.length * 3) / 4) - pad
 }
 
+/** Driver avatars: small JPEG, well under the backend limit of 2 MB. */
+export const AVATAR_OPTS = { maxSide: 512, maxBytes: 2 * 1024 * 1024 }
+
 export class PhotoError extends Error {
   code: 'invalid_image' | 'image_too_large'
   constructor(code: PhotoError['code']) {
@@ -33,7 +36,7 @@ export interface PreparedPhoto {
   height: number
 }
 
-function loadImage(file: File): Promise<HTMLImageElement> {
+function loadImage(file: Blob): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file)
     const img = new Image()
@@ -49,11 +52,16 @@ function loadImage(file: File): Promise<HTMLImageElement> {
   })
 }
 
-/** Downscale to <= 1600 px (longest side) and re-encode as JPEG under 8 MB. */
-export async function prepareImage(file: File): Promise<PreparedPhoto> {
+/** Downscale to <= 1600 px (longest side) and re-encode as JPEG under 8 MB (defaults). */
+export async function prepareImage(
+  file: Blob,
+  opts: { maxSide?: number; maxBytes?: number } = {},
+): Promise<PreparedPhoto> {
+  const maxSide = opts.maxSide ?? MAX_SIDE
+  const maxBytes = opts.maxBytes ?? MAX_BYTES
   if (!file.type.startsWith('image/')) throw new PhotoError('invalid_image')
   const img = await loadImage(file)
-  const { width, height } = fitSize(img.naturalWidth, img.naturalHeight)
+  const { width, height } = fitSize(img.naturalWidth, img.naturalHeight, maxSide)
   const canvas = document.createElement('canvas')
   canvas.width = width
   canvas.height = height
@@ -63,7 +71,7 @@ export async function prepareImage(file: File): Promise<PreparedPhoto> {
   for (const q of QUALITIES) {
     const dataUrl = canvas.toDataURL('image/jpeg', q)
     const base64 = dataUrl.slice(dataUrl.indexOf(',') + 1)
-    if (base64Bytes(base64) < MAX_BYTES) return { base64, dataUrl, width, height }
+    if (base64Bytes(base64) < maxBytes) return { base64, dataUrl, width, height }
   }
   throw new PhotoError('image_too_large')
 }

@@ -4,6 +4,7 @@ import { Toasts } from './components/Toasts'
 import { useLanguage, useT } from './i18n/useT'
 import { api } from './lib/api'
 import { connectionErrorMessage } from './lib/errors'
+import { refreshEventData } from './lib/eventData'
 import { useRoute } from './lib/route'
 import { useStore } from './lib/store'
 import { wsClient } from './lib/ws'
@@ -13,6 +14,7 @@ import { Dashboard } from './pages/Dashboard'
 const History = lazy(() => import('./pages/History').then((m) => ({ default: m.History })))
 const HistoryDetail = lazy(() => import('./pages/History').then((m) => ({ default: m.HistoryDetail })))
 const SettingsPage = lazy(() => import('./pages/SettingsPage').then((m) => ({ default: m.SettingsPage })))
+const Drivers = lazy(() => import('./pages/Drivers').then((m) => ({ default: m.Drivers })))
 const TvMode = lazy(() => import('./pages/TvMode').then((m) => ({ default: m.TvMode })))
 const TrackEditor = lazy(() => import('./pages/TrackEditor').then((m) => ({ default: m.TrackEditor })))
 
@@ -35,6 +37,21 @@ export default function App() {
       (s) => useStore.getState().setSettings(s),
       () => undefined,
     )
+  }, [ws])
+
+  // Roster and assignments: load when the backend is reachable and again on page focus.
+  useEffect(() => {
+    if (ws !== 'open') return
+    void refreshEventData()
+    const on = () => {
+      if (document.visibilityState !== 'hidden') void refreshEventData()
+    }
+    window.addEventListener('focus', on)
+    document.addEventListener('visibilitychange', on)
+    return () => {
+      window.removeEventListener('focus', on)
+      document.removeEventListener('visibilitychange', on)
+    }
   }, [ws])
 
   useEffect(() => {
@@ -60,6 +77,7 @@ export default function App() {
           {route.name === 'history' && <History />}
           {route.name === 'history-detail' && <HistoryDetail id={route.id} />}
           {route.name === 'settings' && <SettingsPage />}
+          {route.name === 'drivers' && <Drivers />}
           {route.name === 'tv' && <TvMode />}
           {route.name === 'track' && <TrackEditor layout={route.layout} />}
         </Suspense>
