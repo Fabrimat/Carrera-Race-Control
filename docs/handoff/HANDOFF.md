@@ -16,44 +16,39 @@ hiccups, never bypass signing).
   schema v4, empty routers `backend/app/api/routes_{drivers,event,io}.py`, reserved
   i18n blocks.
 
-## In progress
+## In progress (updated)
 
-1. **Event mode build** — briefs in [event-mode-briefs.md](event-mode-briefs.md)
-   (shared context + E1 drivers/STT backend, E2 sessions/false start/penalties backend,
-   E4 roster/assignment frontend, E5 programs/session runner/import-export frontend).
-   Arms were running in local worktrees when this was written; finished work lands on
-   `main`, unfinished work may be on `wip/event-*` branches. Then:
-   - **E3 backend export/import** (`routes_io.py`): `POST /api/export`, `POST /api/import`
-     per PROTOCOL "Export / import" (same code path for dry run and apply in one SQLite
-     transaction, rolled back on dry run; settings/layouts validated like their own
-     endpoints; records merge keeps the faster lap; replace of drivers purges their
-     assignments; `has_photo` false; unknown version → 422 `import_unsupported`).
-   - Independent review of each brief, Fable SUPERVISE of the integrated event mode
-     (trust boundaries: photo upload, import, STT), Playwright e2e, commit, push.
-2. **CI** (`.github/workflows/desktop.yml`): x64 (`windows-latest`) + ARM64
-   (`windows-11-arm`, overridable with repo variable `ARM64_RUNNER`) installers, attached
-   to every GitHub Release. Under review when this was written. After merge: trigger a
-   `workflow_dispatch` run and check both jobs; ARM64 skips `windows-curses` (no
-   win_arm64 wheel) — confirm the frozen backend starts on ARM64.
-3. **Presentation video** (not started) — ≤ 90 s, Italian, Italian UI, for internal
-   management, as many features as possible, professional Italian voice, generated with
-   ElevenLabs; simulate everything (simulator track, cars, webcam).
-   Plan:
-   - Script (~190–210 Italian words) covering: live timing from the real Control Unit,
-     AI commentator (live lines + Italian voice), 16:9 control panel, F1-style TV mode on
-     a second monitor, track editor + photo→map + live map with position estimate,
-     sectors, event mode (drivers, "who's driving", qualifying, false start, penalties,
-     import/export), Windows app x64/ARM64, roadmap (webcam tracking, incidents).
-   - Footage: Playwright screen recordings of the real app in Italian (`ui_language: it`)
-     driven by the simulator; ElevenLabs Image & Video API (`/v1/flows/image`,
-     `/v1/flows/video`, e.g. `veo-3.1-generate-001`, 16:9, 1080p; polling ≥ 10 s) for a
-     cinematic intro and simulated webcam shots (verified working: account tier
-     growing_business, image generation OK).
-   - Voice-over: ElevenLabs TTS with a professional Italian voice (pick from the voice
-     library; current commentator voice is Davide `ImsA1Fn5TNc843fFdz99`), music via
-     ElevenLabs Music API, ducked under the voice.
-   - Assemble with ffmpeg (1920×1080, H.264 + AAC, ≤ 90 s, Italian burned-in captions
-     optional). Output outside the repo (don't commit large media).
+1. **Event mode** — merged on `main` and reviewed: E1 drivers/photos/assignments/STT
+   backend, E4 roster + "Who's driving?" frontend, E5 programs/session runner/TV
+   graphics/import-export frontend. Still to do:
+   - **E2** (sessions, qualifying order, false start inference, penalties in the ranking,
+     commentator context) — was being built by an arm on the user's PC (local worktree);
+     a partial snapshot is on branch `wip/event-e2-sessions` (unreviewed). Brief in
+     [event-mode-briefs.md](event-mode-briefs.md). Until it lands, the frontend's
+     `/api/programs` and `/api/event/*` calls get 404/405.
+   - **E3** export/import backend (`routes_io.py`), see the brief notes below; frontend
+     import cap is 5 MB, so the backend body limit for `/api/import` must allow 5 MB.
+   - Fable SUPERVISE of the integrated event mode, Playwright e2e, small nits: stop late
+     `getUserMedia` streams in `VoiceInput`/`PhotoCapture` if unmounted while pending;
+     `api.transcribe` `name_guess` type should be `string | null`.
+   E3 brief: `POST /api/export`, `POST /api/import` per PROTOCOL "Export / import" (same
+   code path for dry run and apply in one SQLite transaction, rolled back on dry run;
+   settings/layouts validated like their own endpoints; records merge keeps the faster
+   lap; replace of drivers purges their assignments; `has_photo` false; unknown version →
+   422 `import_unsupported`, invalid → 422 `import_invalid`).
+2. **CI** — `.github/workflows/desktop.yml` works: ARM64 build passed; x64 failed only on
+   the frontend test command (fixed in 45e9d46). Repo was renamed to
+   `Fabrimat/Carrera-Race-Control` (local remote still points to the old URL, GitHub
+   redirects). Actions on Node 20 are deprecated: Dependabot will bump them.
+3. **README screenshots/GIFs** (requested): capture the app (English UI) with Playwright
+   on the simulator — dashboard 16:9, TV mode, track editor/live map, drivers + who's
+   driving, event page; short GIFs (ffmpeg palettegen) of the start lights and TV banners;
+   store under `docs/images/` (keep each < ~1.5 MB) and embed in README.
+4. **Presentation video** — being produced on the user's PC by an arm (brief kept in the
+   local scratchpad; summary): ≤ 90 s, Italian UI; **cold open like a trailer: the start
+   lights come on, lights out, then the AI commentator calls the action**; then a
+   professional Italian narrator over app footage, ElevenLabs music/SFX/Veo shots,
+   simulated webcam for the roadmap part. Output stays outside the repo.
 
 ## Environment notes
 
