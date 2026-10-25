@@ -28,6 +28,15 @@ const base = (): LiveState => ({
 })
 
 describe('reduceMessage', () => {
+  it('moves a driver between cars on a crossing assignment', () => {
+    const s = { ...base(), assignments: { '0': 'anna', '1': 'luca' } }
+    const out = reduceMessage(s, {
+      type: 'event',
+      data: { type: 'driver_assigned', at: 't', race_time_ms: 0, address: 3, driver_id: 'anna', driver_name: 'Anna', method: 'crossing' },
+    })
+    expect(out.assignments).toEqual({ '1': 'luca', '3': 'anna' })
+  })
+
   it('tracks driver_assigned events: assignment, disarm on crossing, last assignment', () => {
     const armed = { ...base(), armedDriverId: 'anna', armedUntil: '2026-01-01T00:01:00Z' }
     const out = reduceMessage(armed, {

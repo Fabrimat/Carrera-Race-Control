@@ -4,6 +4,7 @@ import type { Messages } from './index'
 export const it: Messages = {
   // ---- drivers and assignment (event mode, roster screen): add keys only here
   'nav.drivers': 'Piloti',
+  'drivers.limits': 'Pilota non salvato: il nome può avere al massimo {name} caratteri, il soprannome {nickname} e la bio {bio}.',
   'who.busy': 'Una gara è in partenza o in corso: aspetta che finisca.',
   'error.llm_unavailable': 'Il servizio vocale o IA non è disponibile: controlla la chiave API del provider selezionato, oppure riprova tra poco.',
   'error.transcription_failed': 'Non sono riuscito a capire la registrazione. Riprova, oppure scegli il pilota a mano.',

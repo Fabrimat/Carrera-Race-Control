@@ -1,8 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useT } from '../i18n/useT'
 import { api } from '../lib/api'
-import { filterDrivers, loadRecent, resolveTranscript, type Resolved } from '../lib/drivers'
-import { guarded } from '../lib/errors'
+import { filterDrivers, guardedDriver, loadRecent, MAX_DRIVER_NAME, resolveTranscript, type Resolved } from '../lib/drivers'
 import { useStore } from '../lib/store'
 import type { Driver } from '../lib/types'
 import { DriverAvatar } from './DriverAvatar'
@@ -37,7 +36,7 @@ export function DriverPicker({ title, allowNone = false, onPick, onClose }: Prop
     const n = name.trim()
     if (!n || busy) return
     setBusy(true)
-    const d = await guarded(() => api.createDriver({ name: n }))
+    const d = await guardedDriver(() => api.createDriver({ name: n.slice(0, MAX_DRIVER_NAME) }))
     setBusy(false)
     if (!d) return
     useStore.getState().setDrivers([...useStore.getState().drivers, d])
@@ -143,7 +142,7 @@ export function DriverPicker({ title, allowNone = false, onPick, onClose }: Prop
           <input
             autoFocus
             value={newName}
-            maxLength={60}
+            maxLength={MAX_DRIVER_NAME}
             aria-label={t('who.new_name')}
             placeholder={t('who.new_name')}
             className="min-h-12 min-w-0 flex-1 rounded-md border border-line bg-panel-2 px-3 text-lg"

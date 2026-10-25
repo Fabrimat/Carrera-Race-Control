@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
+import { ApiError } from './api'
+import { useStore } from './store'
 import {
+  MAX_DRIVER_NAME,
+  guardedDriver,
   carSlots,
   crossingState,
   displayName,
@@ -50,6 +54,10 @@ describe('resolveTranscript', () => {
     expect(resolveTranscript(' Marco. ', null, roster)).toEqual({ kind: 'create', name: 'Marco' })
     expect(resolveTranscript('Marco', 'ghost', roster)).toEqual({ kind: 'create', name: 'Marco' })
   })
+  it('truncates a long spoken name to the backend limit', () => {
+    const r = resolveTranscript('x'.repeat(100), null, roster)
+    expect(r.kind === 'create' && r.name.length).toBe(MAX_DRIVER_NAME)
+  })
   it('is empty for blank text', () => {
     expect(resolveTranscript('  ', null, roster)).toEqual({ kind: 'empty' })
   })
@@ -67,6 +75,15 @@ describe('crossingState', () => {
   it('expires and idles', () => {
     expect(crossingState('2025-12-31T23:59:59Z', now)).toEqual({ status: 'expired' })
     expect(crossingState(null, now)).toEqual({ status: 'idle' })
+  })
+})
+
+describe('guardedDriver', () => {
+  it('explains the field limits on invalid_request', async () => {
+    useStore.setState({ toasts: [] })
+    const out = await guardedDriver(() => Promise.reject(new ApiError(422, 'x', 'invalid_request')))
+    expect(out).toBeUndefined()
+    expect(useStore.getState().toasts[0].message).toMatch(/40.*24.*300/)
   })
 })
 

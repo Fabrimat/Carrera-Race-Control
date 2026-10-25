@@ -22,7 +22,14 @@ export function PhotoCapture({ preview, onChange }: Props) {
     stream.current = null
     setLive(false)
   }
-  useEffect(() => () => stream.current?.getTracks().forEach((tr) => tr.stop()), [])
+  const alive = useRef(true)
+  useEffect(() => {
+    alive.current = true
+    return () => {
+      alive.current = false
+      stream.current?.getTracks().forEach((tr) => tr.stop())
+    }
+  }, [])
 
   const toast = (m: string) => useStore.getState().pushToast(m)
 
@@ -37,6 +44,10 @@ export function PhotoCapture({ preview, onChange }: Props) {
   const openCamera = async () => {
     try {
       const media = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } })
+      if (!alive.current) {
+        media.getTracks().forEach((tr) => tr.stop())
+        return
+      }
       stream.current = media
       setLive(true)
     } catch {

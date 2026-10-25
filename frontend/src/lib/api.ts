@@ -115,7 +115,7 @@ export const api = {
     request<{ armed: boolean }>('POST', '/api/event/assign-next-crossing', { driver_id }),
   cancelNextCrossing: () => request<{ armed: boolean }>('DELETE', '/api/event/assign-next-crossing'),
   transcribe: (body: { audio_base64: string; media_type: string; language: 'en' | 'it' }) =>
-    request<{ text: string; name_guess: string }>('POST', '/api/event/transcribe', body),
+    request<{ text: string; name_guess: string | null }>('POST', '/api/event/transcribe', body),
   programs: () => request<{ programs: EventProgram[] }>('GET', '/api/programs'),
   saveProgram: (p: EventProgram) =>
     request<EventProgram>('PUT', `/api/programs/${encodeURIComponent(p.id)}`, p),

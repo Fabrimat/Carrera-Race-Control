@@ -53,9 +53,20 @@ export function VoiceInput({ onTranscript }: { onTranscript: (text: string, name
       useStore.getState().pushToast(t('voice.mic_error'))
       return
     }
+    if (!alive.current) {
+      media.getTracks().forEach((tr) => tr.stop())
+      return
+    }
     stream.current = media
     const chunks: Blob[] = []
-    const rec = new MediaRecorder(media, { mimeType: mime })
+    let rec: MediaRecorder
+    try {
+      rec = new MediaRecorder(media, { mimeType: mime })
+    } catch {
+      release()
+      useStore.getState().pushToast(t('voice.unsupported'))
+      return
+    }
     recorder.current = rec
     rec.ondataavailable = (e) => {
       if (e.data.size > 0) chunks.push(e.data)
@@ -78,7 +89,14 @@ export function VoiceInput({ onTranscript }: { onTranscript: (text: string, name
     }
     setLeft(MAX_RECORD_S)
     setPhase('recording')
-    rec.start()
+    try {
+      rec.start()
+    } catch {
+      release()
+      setPhase('idle')
+      useStore.getState().pushToast(t('voice.unsupported'))
+      return
+    }
     const began = Date.now()
     timer.current = setInterval(() => {
       const remaining = MAX_RECORD_S - Math.floor((Date.now() - began) / 1000)

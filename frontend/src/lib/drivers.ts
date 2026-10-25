@@ -1,4 +1,7 @@
 // Pure helpers for the roster and the "Who's driving?" assignment (docs/PROTOCOL.md "Event mode").
+import { ApiError } from './api'
+import { notifyError } from './errors'
+import { tNow, useStore } from './store'
 import type { CarConfig, CarState, Driver } from './types'
 
 /** Name shown for a car: the assigned driver, else the car's own name. */
@@ -16,6 +19,25 @@ export function initials(name: string): string {
   if (parts.length === 0) return '?'
   if (parts.length === 1) return Array.from(parts[0]).slice(0, 2).join('').toUpperCase()
   return (Array.from(parts[0])[0] + Array.from(parts[parts.length - 1])[0]).toUpperCase()
+}
+
+// Backend limits (models.py Driver).
+export const MAX_DRIVER_NAME = 40
+export const MAX_DRIVER_NICKNAME = 24
+export const MAX_DRIVER_BIO = 300
+
+/** Like `guarded`, but a 422 `invalid_request` explains the field limits. */
+export async function guardedDriver<T>(fn: () => Promise<T>): Promise<T | undefined> {
+  try {
+    return await fn()
+  } catch (e) {
+    if (e instanceof ApiError && e.code === 'invalid_request') {
+      useStore.getState().pushToast(
+        tNow('drivers.limits', { name: MAX_DRIVER_NAME, nickname: MAX_DRIVER_NICKNAME, bio: MAX_DRIVER_BIO }),
+      )
+    } else notifyError(e)
+    return undefined
+  }
 }
 
 /** Lower-case, accent-free text for searching. */
@@ -76,7 +98,7 @@ export type Resolved =
 export function resolveTranscript(text: string, nameGuess: string | null | undefined, drivers: Driver[]): Resolved {
   const guess = nameGuess ? drivers.find((d) => d.id === nameGuess) : undefined
   if (guess) return { kind: 'match', driver: guess }
-  const name = text.trim().replace(/[.!?,;:]+$/, '').trim()
+  const name = text.trim().replace(/[.!?,;:]+$/, '').trim().slice(0, MAX_DRIVER_NAME).trim()
   return name ? { kind: 'create', name } : { kind: 'empty' }
 }
 

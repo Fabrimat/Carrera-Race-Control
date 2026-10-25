@@ -3,6 +3,7 @@
 export const en = {
   // ---- drivers and assignment (event mode, roster screen): add keys only here
   'nav.drivers': 'Drivers',
+  'drivers.limits': 'Driver not saved: the name can have at most {name} characters, the nickname {nickname} and the bio {bio}.',
   'who.busy': 'A race is starting or running: wait until it is over.',
   'error.llm_unavailable': 'The speech or AI service is unavailable: check the API key of the selected provider, or try again in a moment.',
   'error.transcription_failed': 'Could not understand the recording. Try again, or pick the driver by hand.',

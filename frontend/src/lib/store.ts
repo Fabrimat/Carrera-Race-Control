@@ -114,7 +114,7 @@ export function reduceMessage(s: LiveState, m: WsMessage): Partial<LiveState> {
       const e = m.data
       return {
         events,
-        assignments: { ...s.assignments, [String(e.address)]: e.driver_id },
+        assignments: assignDriver(s.assignments, e.address, e.driver_id, e.method === 'crossing'),
         armedDriverId: e.method === 'crossing' ? null : s.armedDriverId,
         armedUntil: e.method === 'crossing' ? null : s.armedUntil,
         lastAssignment: {
@@ -134,6 +134,19 @@ export function reduceMessage(s: LiveState, m: WsMessage): Partial<LiveState> {
     case 'muted':
       return { muted: m.data.muted }
   }
+}
+
+/** Assign a driver to an address; a crossing moves the driver, so drop it from other cars. */
+function assignDriver(
+  current: Record<string, string>,
+  address: number,
+  driverId: string,
+  moves: boolean,
+): Record<string, string> {
+  const next: Record<string, string> = {}
+  for (const [k, v] of Object.entries(current)) if (!(moves && v === driverId)) next[k] = v
+  next[String(address)] = driverId
+  return next
 }
 
 let toastSeq = 0

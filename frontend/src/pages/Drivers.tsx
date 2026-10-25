@@ -4,7 +4,7 @@ import { PhotoCapture } from '../components/PhotoCapture'
 import { WhoDriving } from '../components/WhoDriving'
 import { useT } from '../i18n/useT'
 import { api } from '../lib/api'
-import { bumpPhoto } from '../lib/drivers'
+import { bumpPhoto, guardedDriver, MAX_DRIVER_BIO, MAX_DRIVER_NAME, MAX_DRIVER_NICKNAME } from '../lib/drivers'
 import { guarded } from '../lib/errors'
 import { refreshEventData } from '../lib/eventData'
 import type { PreparedPhoto } from '../lib/photo'
@@ -33,7 +33,7 @@ function DriverForm({ driver, onDone }: { driver: Driver | null; onDone: () => v
     if (!valid || saving) return
     setSaving(true)
     const fields = { name: name.trim(), nickname: nickname.trim() || null, bio: bio.trim() }
-    let saved = await guarded(() => (driver ? api.saveDriver({ ...driver, ...fields }) : api.createDriver(fields)))
+    let saved = await guardedDriver(() => (driver ? api.saveDriver({ ...driver, ...fields }) : api.createDriver(fields)))
     if (saved && photo !== undefined) {
       const id = saved.id
       const withPhoto = await guarded(() =>
@@ -73,7 +73,7 @@ function DriverForm({ driver, onDone }: { driver: Driver | null; onDone: () => v
         <input
           autoFocus
           value={name}
-          maxLength={60}
+          maxLength={MAX_DRIVER_NAME}
           aria-invalid={touched && !valid}
           className={`${field} text-ink ${touched && !valid ? 'border-signal' : ''}`}
           onChange={(e) => setName(e.target.value)}
@@ -82,11 +82,11 @@ function DriverForm({ driver, onDone }: { driver: Driver | null; onDone: () => v
       </label>
       <label className="flex flex-col gap-1 text-sm text-dim">
         {t('drivers.nickname')}
-        <input value={nickname} maxLength={40} className={`${field} text-ink`} onChange={(e) => setNickname(e.target.value)} />
+        <input value={nickname} maxLength={MAX_DRIVER_NICKNAME} className={`${field} text-ink`} onChange={(e) => setNickname(e.target.value)} />
       </label>
       <label className="flex flex-col gap-1 text-sm text-dim">
         {t('drivers.bio')}
-        <textarea value={bio} rows={3} maxLength={500} className={`${field} text-ink`} onChange={(e) => setBio(e.target.value)} />
+        <textarea value={bio} rows={3} maxLength={MAX_DRIVER_BIO} className={`${field} text-ink`} onChange={(e) => setBio(e.target.value)} />
       </label>
       <div>
         <h4 className="mb-1 text-sm text-dim">{t('drivers.photo')}</h4>
