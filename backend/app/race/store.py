@@ -16,6 +16,9 @@ from typing import Any
 
 from app.race.models import (
     CarConfig,
+    Driver,
+    EventProgram,
+    EventState,
     Lap,
     RaceConfig,
     RaceState,
@@ -25,7 +28,7 @@ from app.race.models import (
     utcnow,
 )
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 # Version 1 baseline (also what a fresh database starts from before migrating).
 _SCHEMA = """
@@ -82,6 +85,28 @@ _MIGRATIONS: dict[int, tuple[str, ...]] = {
             name TEXT PRIMARY KEY,
             json TEXT NOT NULL,
             updated_at TEXT NOT NULL
+        )
+        """,
+    ),
+    4: (
+        """
+        CREATE TABLE IF NOT EXISTS drivers (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            json TEXT NOT NULL
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS programs (
+            id TEXT PRIMARY KEY,
+            json TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS event_state (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            json TEXT NOT NULL
         )
         """,
     ),
@@ -314,6 +339,83 @@ class RaceStore:
         with self._lock, self._conn:
             cursor = self._conn.execute("DELETE FROM track_layouts WHERE name = ?", (name,))
         return cursor.rowcount > 0
+
+    # ------------------------------------------------------------------ drivers (event mode)
+
+    def get_driver(self, driver_id: str) -> Driver | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT json FROM drivers WHERE id = ?", (driver_id,)
+            ).fetchone()
+        return Driver.model_validate_json(row["json"]) if row is not None else None
+
+    def list_drivers(self) -> list[Driver]:
+        """All drivers, sorted by name (case-insensitive)."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT json FROM drivers ORDER BY name COLLATE NOCASE, id"
+            ).fetchall()
+        return [Driver.model_validate_json(row["json"]) for row in rows]
+
+    def save_driver(self, driver: Driver) -> Driver:
+        """Insert or replace a driver by id."""
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO drivers (id, name, json) VALUES (?, ?, ?)",
+                (driver.id, driver.name, driver.model_dump_json()),
+            )
+        return driver
+
+    def delete_driver(self, driver_id: str) -> bool:
+        with self._lock, self._conn:
+            cursor = self._conn.execute("DELETE FROM drivers WHERE id = ?", (driver_id,))
+        return cursor.rowcount > 0
+
+    # ------------------------------------------------------------------ event programs
+
+    def get_program(self, program_id: str) -> EventProgram | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT json FROM programs WHERE id = ?", (program_id,)
+            ).fetchone()
+        return EventProgram.model_validate_json(row["json"]) if row is not None else None
+
+    def list_programs(self) -> list[EventProgram]:
+        """All programs, most recently updated first."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT json FROM programs ORDER BY updated_at DESC, id"
+            ).fetchall()
+        return [EventProgram.model_validate_json(row["json"]) for row in rows]
+
+    def save_program(self, program: EventProgram) -> EventProgram:
+        """Insert or replace a program; ``updated_at`` is stamped now."""
+        saved = program.model_copy(update={"updated_at": utcnow()})
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO programs (id, json, updated_at) VALUES (?, ?, ?)",
+                (saved.id, saved.model_dump_json(), saved.updated_at.isoformat()),
+            )
+        return saved
+
+    def delete_program(self, program_id: str) -> bool:
+        with self._lock, self._conn:
+            cursor = self._conn.execute("DELETE FROM programs WHERE id = ?", (program_id,))
+        return cursor.rowcount > 0
+
+    # ------------------------------------------------------------------ event state
+
+    def load_event_state(self) -> EventState:
+        with self._lock:
+            row = self._conn.execute("SELECT json FROM event_state WHERE id = 1").fetchone()
+        return EventState.model_validate_json(row["json"]) if row is not None else EventState()
+
+    def save_event_state(self, state: EventState) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO event_state (id, json) VALUES (1, ?)",
+                (state.model_dump_json(),),
+            )
 
     # ------------------------------------------------------------------ counters
 

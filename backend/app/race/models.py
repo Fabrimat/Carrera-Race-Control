@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 def utcnow() -> datetime:
@@ -505,11 +505,17 @@ class EventState(BaseModel):
     program_id: str | None = None
     current_index: int = 0  # session to run next / running
     assignments: dict[int, str] = Field(default_factory=dict)  # address -> driver id
+    # One per session_id: re-running a session replaces its result.
     results: list[SessionResult] = Field(default_factory=list)
+    # "Assign on next crossing": the armed driver and when the arming expires (60 s).
+    armed_driver_id: str | None = None
+    armed_until: datetime | None = None
 
 
 class ExportBundle(BaseModel):
-    """A portable JSON export of the configuration. API keys are never included."""
+    """A portable JSON export of the configuration. API keys and photos are never included."""
+
+    model_config = ConfigDict(extra="forbid")
 
     format: Literal["carrera-rms"] = "carrera-rms"
     version: int = 1

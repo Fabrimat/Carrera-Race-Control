@@ -1,4 +1,6 @@
-import type { Messages } from './index'
+import type {
+  // ---- drivers and assignment (event mode, roster screen): add keys only here
+ Messages } from './index'
 
 // Italian UI dictionary. Typed against the English key set: a missing key is a type error.
 export const it: Messages = {
@@ -344,4 +346,5 @@ export const it: Messages = {
   'editor.error_image_too_large': "La foto è troppo grande anche dopo averla ridotta.",
   'editor.error_invalid_image': "Il file non è un'immagine utilizzabile (usa JPEG, PNG o WebP).",
 
+  // ---- event programs, session runner, import/export (event mode): add keys only here
 }

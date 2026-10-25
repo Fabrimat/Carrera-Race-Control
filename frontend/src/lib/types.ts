@@ -396,7 +396,9 @@ export interface EventState {
   program_id: string | null
   current_index: number
   assignments: Record<string, string> // address (as string key) -> driver id
-  results: SessionResult[]
+  results: SessionResult[] // one per session_id (re-run replaces)
+  armed_driver_id: string | null // "assign on next crossing"
+  armed_until: string | null
 }
 
 export type ExportSection = 'settings' | 'drivers' | 'programs' | 'layouts' | 'records'

@@ -18,7 +18,7 @@ from app.race.models import (
     TrackRecordInfo,
     Verbosity,
 )
-from app.race.store import RaceStore
+from app.race.store import SCHEMA_VERSION, RaceStore
 
 CARS = [
     CarConfig(address=0, name="Rossa", color="#e53935", nickname="Rocky"),
@@ -244,7 +244,7 @@ def test_v1_database_upgrades_in_place(tmp_path: Path) -> None:
         store.close()
 
     conn = sqlite3.connect(path)
-    assert conn.execute("SELECT version FROM schema_version").fetchall() == [(3,)]
+    assert conn.execute("SELECT version FROM schema_version").fetchall() == [(SCHEMA_VERSION,)]
     conn.close()
     # Reopening an already upgraded database is a no-op.
     reopened = RaceStore(path)
@@ -341,5 +341,25 @@ def test_v2_database_upgrades_to_layouts_idempotently(tmp_path: Path) -> None:
     finally:
         reopened.close()
     conn = sqlite3.connect(path)
-    assert conn.execute("SELECT version FROM schema_version").fetchall() == [(3,)]
+    assert conn.execute("SELECT version FROM schema_version").fetchall() == [(SCHEMA_VERSION,)]
     conn.close()
+
+
+def test_drivers_programs_and_event_state_roundtrip() -> None:
+    from app.race.models import Driver, EventProgram, EventState
+
+    store = RaceStore(":memory:")
+    store.save_driver(Driver(id="b", name="bea"))
+    store.save_driver(Driver(id="a", name="Anna"))
+    assert [d.id for d in store.list_drivers()] == ["a", "b"]
+    assert store.get_driver("a") is not None
+    assert store.delete_driver("a") and not store.delete_driver("a")
+
+    store.save_program(EventProgram(id="p1", name="Cup"))
+    assert [p.id for p in store.list_programs()] == ["p1"]
+    assert store.get_program("p1") is not None
+    assert store.delete_program("p1") and store.list_programs() == []
+
+    assert store.load_event_state() == EventState()
+    store.save_event_state(EventState(program_id="p1", assignments={0: "b"}))
+    assert store.load_event_state().assignments == {0: "b"}

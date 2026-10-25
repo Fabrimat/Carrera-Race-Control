@@ -1,6 +1,8 @@
 // English UI dictionary. This file defines the key set; `it.ts` must match it exactly.
 // Plurals: `key_one` / `key_other`, selected by the `count` parameter.
 export const en = {
+  // ---- drivers and assignment (event mode, roster screen): add keys only here
+
   'app.title': 'Carrera Race Control',
   'app.connecting': 'Connecting to backend…',
   'app.offline': 'Backend offline',
@@ -343,4 +345,5 @@ export const en = {
   'editor.error_image_too_large': "That photo is too large even after shrinking it.",
   'editor.error_invalid_image': "That file is not a usable image (use JPEG, PNG or WebP).",
 
+  // ---- event programs, session runner, import/export (event mode): add keys only here
 }
