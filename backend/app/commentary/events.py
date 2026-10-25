@@ -23,6 +23,7 @@ from app.race.models import (
     CarConfig,
     CarState,
     CommentaryPriority,
+    DriverAssigned,
     Idle,
     LapCompleted,
     LowFuel,
@@ -187,6 +188,10 @@ def candidates(
         specs.append(("low_fuel", prio.NORMAL, fields, {"fuel": event.fuel}, event.address))
     elif isinstance(event, Idle):
         specs.append(("idle", prio.LOW, {}, {"idle_seconds": event.seconds}, None))
+    elif isinstance(event, DriverAssigned):
+        fields = {"name": event.driver_name, "car": speech.say_number(event.address + 1, lang)}
+        facts = {"driver": event.driver_name, "car": event.address + 1}
+        specs.append(("driver_assigned", prio.NORMAL, fields, facts, event.address))
     elif isinstance(event, LapCompleted):
         specs.extend(_lap_specs(event, state, verbosity, lang, name))
     elif isinstance(event, SectorCompleted):

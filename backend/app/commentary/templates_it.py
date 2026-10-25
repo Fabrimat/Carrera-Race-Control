@@ -89,6 +89,11 @@ TEMPLATES: dict[str, list[str]] = {
         "Grande vittoria di {winner}, secondo {second}!",
         "Gara conclusa, trionfa {winner}!",
     ],
+    "driver_assigned": [
+        "{name} prende la macchina {car}.",
+        "{name} è al volante della macchina {car}.",
+        "La macchina {car} va a {name}.",
+    ],
     "idle": [
         "La pista è tranquilla, pronti per la prossima sfida?",
         "Tutto fermo in pista, i motori sono in attesa.",
@@ -97,4 +102,4 @@ TEMPLATES: dict[str, list[str]] = {
 }
 
 # Placeholders that never carry numbers: variants using only these may be cached as audio.
-STATIC_FIELDS = frozenset({"name", "winner", "second", "passed", "holder", "sector"})
+STATIC_FIELDS = frozenset({"name", "winner", "second", "passed", "holder", "sector", "car"})

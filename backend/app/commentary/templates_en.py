@@ -85,6 +85,11 @@ TEMPLATES: dict[str, list[str]] = {
         "A great win for {winner}, {second} comes second!",
         "Race complete, {winner} is the champion!",
     ],
+    "driver_assigned": [
+        "{name} takes car {car}.",
+        "{name} is at the wheel of car {car}.",
+        "Car {car} goes to {name}.",
+    ],
     "idle": [
         "The track is quiet, ready for the next challenge?",
         "All quiet on the track, engines are waiting.",
@@ -92,4 +97,4 @@ TEMPLATES: dict[str, list[str]] = {
     ],
 }
 
-STATIC_FIELDS = frozenset({"name", "winner", "second", "passed", "holder", "sector"})
+STATIC_FIELDS = frozenset({"name", "winner", "second", "passed", "holder", "sector", "car"})
