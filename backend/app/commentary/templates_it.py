@@ -94,7 +94,50 @@ TEMPLATES: dict[str, list[str]] = {
         "Tutto fermo in pista, i motori sono in attesa.",
         "Nessuno in pista, chi vuole sfidarsi?",
     ],
+    # ---- modalità evento: falsa partenza (per azione; con / senza auto) e fine sessione
+    "false_start_warn": [
+        "Falsa partenza! {name} anticipa il via!",
+        "{name} parte troppo presto, è falsa partenza!",
+        "Troppa fretta, {name}! Falsa partenza!",
+    ],
+    "false_start_anon": [
+        "Falsa partenza! Qualcuno ha anticipato il via!",
+        "Troppo presto! La partenza è annullata!",
+        "Falsa partenza, tutti di nuovo sulla linea!",
+    ],
+    "false_start_penalty": [
+        "Falsa partenza di {name}: penalità di {penalty}!",
+        "{name} anticipa il via e si prende {penalty} di penalità!",
+        "Errore che costa caro a {name}: falsa partenza, {penalty} di penalità!",
+    ],
+    "false_start_restart": [
+        "Falsa partenza di {name}! Si riparte!",
+        "{name} anticipa il via, la partenza si ripete!",
+        "Troppo presto, {name}! Tutti sulla linea, nuova partenza!",
+    ],
+    "false_start_restart_anon": [
+        "Falsa partenza! La partenza si ripete!",
+        "Troppo presto! Tutti sulla linea, si riparte!",
+        "Partenza annullata, si riaccendono i semafori!",
+    ],
+    "session_finished": [
+        "{session}, bandiera a scacchi: vince {winner}!",
+        "Bandiera a scacchi! Vince {winner}, secondo {second}!",
+        "Sessione conclusa, la vittoria va a {winner}!",
+        "È finita! {winner} si prende la vittoria!",
+    ],
+    "practice_finished": [
+        "{session} in archivio, {winner} in cima alla classifica!",
+        "Fine delle prove: {winner} è davanti a tutti!",
+        "Prove concluse, comanda {winner}!",
+    ],
+    "qualifying_finished": [
+        "Qualifiche finite: pole position per {winner}!",
+        "{winner} conquista la pole! In prima fila anche {second}!",
+        "La pole position è di {winner}!",
+        "{session} in archivio, {winner} partirà in pole!",
+    ],
 }
 
 # Placeholders that never carry numbers: variants using only these may be cached as audio.
-STATIC_FIELDS = frozenset({"name", "winner", "second", "passed", "holder", "sector"})
+STATIC_FIELDS = frozenset({"name", "winner", "second", "passed", "holder", "sector", "session"})

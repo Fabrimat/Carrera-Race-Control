@@ -23,6 +23,7 @@ from app.race.models import (
     CarConfig,
     CarState,
     CommentaryPriority,
+    FalseStart,
     Idle,
     LapCompleted,
     LowFuel,
@@ -35,6 +36,8 @@ from app.race.models import (
     RaceStarted,
     RaceState,
     SectorCompleted,
+    SessionFinished,
+    SessionKind,
     TrackRecord,
     Verbosity,
 )
@@ -60,6 +63,7 @@ class Candidate:
     address: int | None = None
     facts: dict[str, Any] = field(default_factory=dict)
     language: str = DEFAULT_LANGUAGE
+    tone: str | None = None  # event commentary style (set by the director), None = default
 
 
 class _Safe(dict):
@@ -130,7 +134,8 @@ def candidates(
         specs.append(("race_started", prio.HIGH, {}, {"mode": event.mode.value}, None))
     elif isinstance(event, RaceFinished):
         winner = event.winner if event.winner is not None else next(iter(event.order), None)
-        if winner is not None:
+        # During an event the session_finished line that follows announces the result.
+        if winner is not None and state.session is None:
             fields = {"winner": name(winner)}
             facts: dict[str, Any] = {"winner": name(winner)}
             if len(event.order) > 1:
@@ -187,6 +192,10 @@ def candidates(
         specs.append(("low_fuel", prio.NORMAL, fields, {"fuel": event.fuel}, event.address))
     elif isinstance(event, Idle):
         specs.append(("idle", prio.LOW, {}, {"idle_seconds": event.seconds}, None))
+    elif isinstance(event, FalseStart):
+        specs.extend(_false_start_specs(event, lang, name))
+    elif isinstance(event, SessionFinished):
+        specs.extend(_session_specs(event, state, name))
     elif isinstance(event, LapCompleted):
         specs.extend(_lap_specs(event, state, verbosity, lang, name))
     elif isinstance(event, SectorCompleted):
@@ -200,6 +209,53 @@ def candidates(
         facts = {"event": key, **facts}
         result.append(Candidate(text, level, event.type, key, cacheable, address, facts, lang))
     return result
+
+
+def _false_start_specs(event: FalseStart, lang: str, name: Callable[[int], str]) -> list[_Spec]:
+    """One HIGH line per false start, by action; ``ignore`` is silent."""
+    if event.action == "ignore":
+        return []
+    prio = CommentaryPriority
+    facts: dict[str, Any] = {"action": event.action}
+    if event.address is None:
+        key = "false_start_restart_anon" if event.action == "restart" else "false_start_anon"
+        return [(key, prio.HIGH, {}, facts, None)]
+    fields = {"name": name(event.address)}
+    facts["driver"] = name(event.address)
+    if event.action == "penalty":
+        fields["penalty"] = speech.say_lap_time(event.penalty_ms, lang)
+        facts["penalty_ms"] = event.penalty_ms
+        key = "false_start_penalty"
+    elif event.action == "restart":
+        key = "false_start_restart"
+    else:
+        key = "false_start_warn"
+    return [(key, prio.HIGH, fields, facts, event.address)]
+
+
+def _session_specs(
+    event: SessionFinished, state: RaceState, name: Callable[[int], str]
+) -> list[_Spec]:
+    """End of an event session: the winner (qualifying: pole position)."""
+    if not event.order:
+        return []
+    winner = event.order[0]
+    key = {
+        SessionKind.QUALIFYING: "qualifying_finished",
+        SessionKind.PRACTICE: "practice_finished",
+    }.get(event.kind, "session_finished")
+    fields = {"winner": name(winner)}
+    facts: dict[str, Any] = {"session_kind": event.kind.value, "winner": name(winner)}
+    if event.kind is SessionKind.QUALIFYING:
+        facts["pole_position"] = name(winner)
+    if len(event.order) > 1:
+        fields["second"] = name(event.order[1])
+        facts["second"] = name(event.order[1])
+    session = state.session
+    if session is not None and session.session_id == event.session_id and session.name:
+        fields["session"] = session.name
+        facts["session"] = session.name
+    return [(key, CommentaryPriority.HIGH, fields, facts, winner)]
 
 
 def _lap_specs(

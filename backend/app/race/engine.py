@@ -50,6 +50,17 @@ Design notes
   Overall-best flags follow the BestLap rule: ``overall_best`` only when an existing race best
   of that sector is beaten (the very first split of a sector is silent); ``personal_best`` only
   when an existing personal best is beaten without being an overall best.
+* **Ranking.** Laps desc, then ``total_time_ms + penalty_ms`` (time penalties count in the
+  live standings, the gaps and the ``RaceFinished`` order). In a qualifying session
+  (:meth:`RaceEngine.set_session_rules`) cars are ranked by best valid lap asc, cars without
+  one after them (by laps / time); the gaps are then best-lap deltas.
+* **False start.** The CU aborts the sequence by itself (``Status.start`` 8/9) and does not say
+  which car jumped. A start/finish crossing while STARTING with lights 2..6 marks the first
+  such car as the candidate (light 1 = cars being placed, ignored). On the transition into 8/9
+  the session's :class:`FalseStartRule` decides: ``ignore`` nothing; ``warn`` a ``FalseStart``
+  event; ``penalty`` adds ``penalty_s`` to the candidate's ``penalty_ms`` (a ``warn`` event
+  without address when there is no candidate); ``restart`` an event (the controller presses
+  START again). Without session rules (no event running) false starts emit nothing.
 * **Segment learning.** Per car, ``segment_estimates["a>b"]`` (sensors in driving order, line =
   1, the last one wrapping to the line; with no Check Lanes just ``"1>1"``, the full lap) is an
   EWMA (alpha 0.3) of valid segment times, seeded by the first one. Segments longer than 1.8x
@@ -68,6 +79,8 @@ from app.race.models import (
     CarConfig,
     CarState,
     Crossing,
+    FalseStart,
+    FalseStartRule,
     Idle,
     Lap,
     LapCompleted,
@@ -122,6 +135,7 @@ class _Car:
     pit_change_ms: int | None = None  # race time of the first frame of a pending pit change
     pit_change_frames: int = 0
     pit_stops: int = 0
+    penalty_ms: int = 0  # time penalties (false start), part of the ranking
     low_fuel_armed: bool = True
     finished: bool = False
     # sectors
@@ -138,6 +152,11 @@ class _Car:
     @property
     def crossed(self) -> bool:
         return self.last_ts is not None
+
+    @property
+    def ranked_time_ms(self) -> int:
+        """Race time used for the ranking: last crossing plus time penalties."""
+        return (self.total_time_ms or 0) + self.penalty_ms
 
 
 class RaceEngine:
@@ -156,6 +175,10 @@ class RaceEngine:
         # reporting it has not been pressed again, so it must not auto-prepare a new race.
         self._stale_light: int | None = None
         self._declared: list[int] = []
+        # Session rules (event mode): kept across races until changed by the controller.
+        self._qualifying = False
+        self._false_start_rule: FalseStartRule | None = None
+        self._next_rules: tuple[bool, FalseStartRule | None] = (False, None)
         self._reset_runtime()
 
     # ------------------------------------------------------------------ lifecycle
@@ -168,6 +191,7 @@ class RaceEngine:
         self._fuel_mode = False
         self._pit_lane = False
         self._sequence_seen = False
+        self._jump_candidate: int | None = None  # first car crossing during lights 2..6
         self._go_host: float | None = None
         self._cu_origin: int | None = None
         self._resync: set[int] = set()  # cars whose next crossing re-anchors (after resync)
@@ -233,14 +257,40 @@ class RaceEngine:
             for seg in stale_segments:
                 car.seg_est.pop(seg, None)
 
+    def set_session_rules(
+        self, *, qualifying: bool = False, false_start: FalseStartRule | None = None
+    ) -> None:
+        """Ranking and false start accounting of the event session (defaults: no event).
+
+        They take effect at the next :meth:`prepare` (also the automatic one when START is
+        pressed on the CU) or :meth:`reset`, right away while IDLE: a race in progress or a
+        finished one keeps the rules it ran with (its final order does not change).
+        """
+        self._next_rules = (qualifying, false_start)
+        if self._phase is RacePhase.IDLE:
+            self._apply_rules()
+
+    def _apply_rules(self) -> None:
+        self._qualifying, self._false_start_rule = self._next_rules
+
+    @property
+    def qualifying(self) -> bool:
+        return self._qualifying
+
+    @property
+    def false_start_rule(self) -> FalseStartRule | None:
+        return self._false_start_rule
+
     def prepare(self, config: RaceConfig) -> None:
         """Arm a new race (phase STARTING) and clear all race data."""
         self.config = config
         self._stale_light = None
+        self._apply_rules()
         self._reset_runtime()
         self._phase = RacePhase.STARTING
 
     def reset(self) -> None:
+        self._apply_rules()
         self._remember_light()
         self._reset_runtime()
         self._phase = RacePhase.IDLE
@@ -292,6 +342,7 @@ class RaceEngine:
 
     def _begin_running(self) -> list[RaceEvent]:
         self._phase = RacePhase.RUNNING
+        self._jump_candidate = None
         self._go_host = self._clock()
         self._race_ms = 0
         self._sync_race_ms = 0
@@ -357,8 +408,30 @@ class RaceEngine:
 
     def _standings(self) -> list[_Car]:
         placed = [c for c in self._cars.values() if c.crossed]
-        placed.sort(key=lambda c: (-c.laps, c.total_time_ms or 0, c.address))
+        if self._qualifying:
+            # Best valid lap asc; cars without one after them, by the race order.
+            placed.sort(
+                key=lambda c: (
+                    c.best_lap_ms is None,
+                    c.best_lap_ms or 0,
+                    -c.laps,
+                    c.ranked_time_ms,
+                    c.address,
+                )
+            )
+        else:
+            placed.sort(key=lambda c: (-c.laps, c.ranked_time_ms, c.address))
         return placed
+
+    def _gap(self, car: _Car, other: _Car) -> tuple[int | None, int]:
+        """(gap in ms, gap in laps) of ``car`` behind ``other`` in the current ranking."""
+        if self._qualifying:
+            if car.best_lap_ms is None or other.best_lap_ms is None:
+                return None, 0
+            return car.best_lap_ms - other.best_lap_ms, 0
+        if car.laps == other.laps:
+            return car.ranked_time_ms - other.ranked_time_ms, 0
+        return None, other.laps - car.laps
 
     def _name_color(self, address: int) -> tuple[str, str]:
         cfg = self._configs.get(address)
@@ -386,12 +459,9 @@ class RaceEngine:
             gap_laps = 0
             gap_ahead: int | None = None
             if leader is not None and car is not leader:
-                if car.laps == leader.laps:
-                    gap_leader = (car.total_time_ms or 0) - (leader.total_time_ms or 0)
-                else:
-                    gap_laps = leader.laps - car.laps
-            if ahead is not None and car.laps == ahead.laps:
-                gap_ahead = (car.total_time_ms or 0) - (ahead.total_time_ms or 0)
+                gap_leader, gap_laps = self._gap(car, leader)
+            if ahead is not None:
+                gap_ahead, _ = self._gap(car, ahead)
             cars.append(self._car_state(car, index + 1, gap_leader, gap_laps, gap_ahead))
         unplaced = sorted(
             a for a, c in self._cars.items() if not c.crossed and (a <= 5 and a in self._configs)
@@ -476,6 +546,7 @@ class RaceEngine:
             best_sectors=best,
             last_crossing=car.last_crossing.model_copy() if car.last_crossing else None,
             segment_estimates=dict(car.seg_est),
+            penalty_ms=car.penalty_ms,
         )
 
     # ------------------------------------------------------------------ input
@@ -492,6 +563,7 @@ class RaceEngine:
 
     def _on_status(self, msg: Status) -> list[RaceEvent]:
         events: list[RaceEvent] = []
+        previous_light = self._start_light
         self._start_light = msg.start
         self._fuel_mode = bool(msg.mode & MODE_FUEL)
         self._pit_lane = bool(msg.mode & MODE_PIT_LANE)
@@ -516,6 +588,8 @@ class RaceEngine:
                 events.extend(self._begin_running())
             elif msg.start in (8, 9):
                 self._sequence_seen = False  # false start: stay in STARTING
+                if previous_light not in (8, 9):  # once per false start, not per frame
+                    events.extend(self._false_start())
 
         self._advance_clock()
         emit = self._emitting()
@@ -573,10 +647,39 @@ class RaceEngine:
                     )
         return events
 
+    def _false_start(self) -> list[RaceEvent]:
+        """Apply the session's false start rule to the inferred candidate (see module doc)."""
+        candidate, self._jump_candidate = self._jump_candidate, None
+        rule = self._false_start_rule
+        if rule is None or rule.action == "ignore":
+            return []
+        if rule.action == "penalty":
+            if candidate is None:
+                return [FalseStart(address=None, action="warn")]
+            penalty = rule.penalty_s * 1000
+            car = self._cars.get(candidate)
+            if car is None:
+                car = self._cars[candidate] = _Car(candidate)
+            car.penalty_ms += penalty
+            return [FalseStart(address=candidate, action="penalty", penalty_ms=penalty)]
+        return [FalseStart(address=candidate, action=rule.action)]
+
     # ---- timer
+
+    def _note_jump(self, msg: Timer) -> None:
+        """A line crossing during the countdown (lights 2..6): remember the first car."""
+        if (
+            self._phase is RacePhase.STARTING
+            and 2 <= self._start_light <= 6
+            and msg.sector == 1
+            and self._jump_candidate is None
+            and (msg.address <= 5 or msg.address in self._configs)
+        ):
+            self._jump_candidate = msg.address
 
     def _on_timer(self, msg: Timer) -> list[RaceEvent]:
         if not self._emitting():
+            self._note_jump(msg)
             return []
         race_t = self._race_time_for(msg.timestamp)  # anchors the clock on the first Timer
         if msg.sector not in (1, 2, 3):
