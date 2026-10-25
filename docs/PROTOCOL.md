@@ -87,11 +87,14 @@ RaceDetail = Omit<RaceSummary, "laps"> & {   // `laps` is the lap list here, not
 | `record_not_found` | 404 | `DELETE /api/records/{layout}` for a layout without a record |
 | `audio_not_found` | 404 | no audio for that commentary line |
 | `layout_not_found` | 404 | unknown layout name (`GET` / `DELETE /api/layouts/{name}`) |
-| `llm_unavailable` | 503 | `POST /api/layouts/from-photo`: no key for the selected provider, the key / vision model was rejected (HTTP 401, 403, 404), or the provider is unreachable, slow (45 s timeout), throttling (429) or failing (5xx): not the photo's fault, try again later |
+| `llm_unavailable` | 503 | `POST /api/layouts/from-photo` / `POST /api/event/transcribe`: no key for the selected provider, the key / vision model was rejected (HTTP 401, 403, 404), or the provider is unreachable, slow (45 s timeout), throttling (429) or failing (5xx): not the photo's fault, try again later |
 | `photo_unrecognised` | 422 | `from-photo`: no closed track found, unusable or too coarse reply, or the API rejected the request (other 4xx) |
 | `photo_busy` | 429 | `from-photo`: another photo conversion is already running (one at a time); retry shortly |
-| `image_too_large` | 413 | `from-photo`: image larger than 8 MB (decoded) |
-| `invalid_image` | 422 | `from-photo`: not base64, or not JPEG / PNG / WebP (magic bytes checked) |
+| `image_too_large` | 413 | `from-photo`: image larger than 8 MB (decoded); driver photo larger than 2 MB |
+| `invalid_image` | 422 | `from-photo` / driver photo: not base64, or not JPEG / PNG / WebP (magic bytes checked) |
+| `transcription_failed` | 422 | `POST /api/event/transcribe`: the provider rejected the audio (other 4xx) or returned no text |
+| `import_invalid` | 422 | `POST /api/import`: the bundle is not valid (wrong format, invalid section content); `detail` lists the problems |
+| `import_unsupported` | 422 | `POST /api/import`: the bundle `version` is newer than this app supports |
 | `invalid_request` | 422 | the request body / query does not match the schema |
 | `forbidden_origin` | 403 | cross-origin state-changing request (see "Security") |
 
@@ -213,7 +216,7 @@ addresses; `CarState.driver_id` / `driver_name` carry the assignment and every U
 | GET | `/api/drivers/{id}/photo` | – | the image (404 if none) |
 | DELETE | `/api/drivers/{id}/photo` | – | `Driver` |
 | GET | `/api/event/assignments` | – | `{"assignments": {address: driver_id}}` |
-| PUT | `/api/event/assignments` | `{"assignments": {address: driver_id \| null}}` | same (manual) |
+| PUT | `/api/event/assignments` | `{"assignments": {address: driver_id \| null}}` | same; merges (only the given addresses change, `null` clears), emits `driver_assigned` (method `manual`). A crossing assignment also removes that driver from any other car. |
 | POST | `/api/event/assign-next-crossing` | `{"driver_id"}` | `{"armed": true}` — the next car to cross the start/finish line (while no race is running) gets this driver; emits `driver_assigned` (method `crossing`). One armed driver at a time; `DELETE` same path cancels. Times out after 60 s. |
 | POST | `/api/event/transcribe` | `{"audio_base64", "media_type", "language"}` (≤ 2 MB) | `{"text", "name_guess"}` speech-to-text of a spoken name (ElevenLabs STT, or OpenAI if that is the selected provider); errors `llm_unavailable` / `transcription_failed` |
 
