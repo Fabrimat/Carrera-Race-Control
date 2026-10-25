@@ -333,6 +333,7 @@ def test_fresh_settings_db_is_seeded_from_env_once(tmp_path: Path) -> None:
     assert ctl.settings.commentary.language == "en"
     assert ctl.settings.track.mode == "serial"
     assert ctl.settings.track.address == "COM4"
+    assert ctl.settings.commentary.llm_enabled is False  # no Anthropic key configured
     # Later the persisted settings win over the env default.
     store.save_settings(Settings())
     ctl2 = make_controller(
@@ -957,3 +958,28 @@ async def test_stop_while_cu_stays_armed_does_not_restart(tmp_path: Path) -> Non
         assert [e.type for e in hub(ctl).of("event")].count("race_started") == 0
 
     await running(ctl, body)
+
+
+def test_llm_defaults_on_for_a_fresh_db_with_an_anthropic_key(tmp_path: Path) -> None:
+    store = RaceStore(tmp_path / "db.sqlite3")
+    config = make_config(tmp_path, anthropic_api_key="k")
+    ctl = make_controller(tmp_path, store=store, config=config)
+    assert ctl.settings.commentary.llm_enabled is True
+    # An explicit user choice is never flipped back.
+    settings = store.load_settings()
+    settings.commentary.llm_enabled = False
+    store.save_settings(settings)
+    ctl2 = make_controller(tmp_path, store=store, config=config)
+    assert ctl2.settings.commentary.llm_enabled is False
+    store.close()
+
+
+def test_writer_depends_on_the_anthropic_key(tmp_path: Path) -> None:
+    from app.commentary.llm import AnthropicWriter
+
+    tts = FakeTTS(available=False)
+    ctl = RaceController(make_config(tmp_path), RaceStore(":memory:"), tts=tts)
+    assert isinstance(ctl.director._writer, TemplateWriter)
+    config = make_config(tmp_path, anthropic_api_key="k")
+    ctl = RaceController(config, RaceStore(":memory:"), tts=tts)
+    assert isinstance(ctl.director._writer, AnthropicWriter)

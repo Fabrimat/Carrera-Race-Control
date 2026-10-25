@@ -140,7 +140,7 @@ The API has no authentication: it is meant to listen on `127.0.0.1` only (the de
 - **Language**: English or Italian, chosen independently of the UI language in Settings. Lines are built from several variants per event and spoken in natural form (times and gaps are verbalised, not read as raw milliseconds).
 - **Voice**: ElevenLabs streaming TTS, default model Flash v2.5 (`eleven_flash_v2_5`, lowest latency, multilingual). Static phrases are cached on disk under `DATA_DIR/tts_cache`.
 - **Budgets**: a session and a monthly character budget (Settings). Over budget, or on any TTS error such as a missing key or rate limiting, the commentary silently falls back to text only.
-- **LLM (optional)**: with `ANTHROPIC_API_KEY` and "AI-written lines" enabled, routine low priority lines are written by an Anthropic model (persona, one or two short sentences, only the given facts). It has a hard timeout of about 1.5 s and falls back to the templates. Fast events always use templates.
+- **LLM (optional)**: with `ANTHROPIC_API_KEY` and "AI-written lines" enabled, every line is written live by an Anthropic Haiku model from the race situation (one short sentence, only the given facts), with the templates as instant fallback on timeout, error or rate limit. Fresh installs with a key get it enabled; existing installs must tick "AI-written lines (LLM)" in Settings once.
 - **Audio output**: "This browser" streams the audio to the page (click anywhere once to allow audio, browsers block autoplay). "Server speakers" plays on the machine running the backend through `ffplay`; install FFmpeg and make sure `ffplay` is on the `PATH`, otherwise the app logs it and uses the browser.
 - Mute and volume are in the commentary panel.
 

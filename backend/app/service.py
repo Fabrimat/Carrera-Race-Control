@@ -264,6 +264,8 @@ class RaceController:
         if self.store.get_counter(SEEDED_COUNTER) == 0:
             # Fresh settings DB: seed the defaults that come from the environment.
             settings.commentary.language = self.config.commentary_lang
+            # The LLM writes the lines whenever a key exists; an explicit choice is never flipped.
+            settings.commentary.llm_enabled = self.config.has_anthropic_key()
             settings.track = TrackSettings(
                 mode=self.config.track_mode, address=self.config.track_address
             )
@@ -282,7 +284,7 @@ class RaceController:
         )
 
     def _default_writer(self) -> LineWriter:
-        # The director only calls the writer when settings.commentary.llm_enabled is on, so
+        # The director only uses the writer when settings.commentary.llm_enabled is on, so
         # with a key present the Anthropic writer is always wired and toggling works live.
         if self.config.has_anthropic_key():
             assert self.config.anthropic_api_key is not None

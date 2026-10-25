@@ -365,7 +365,7 @@ async def test_llm_timeout_falls_back_to_template_line():
     assert line is not None and line.source == "template" and line.text
 
 
-async def test_llm_used_only_for_low_priority():
+async def test_llm_used_for_every_priority():
     calls = []
 
     class Writer:
@@ -373,15 +373,131 @@ async def test_llm_used_only_for_low_priority():
             calls.append(candidate.priority)
             return "linea LLM"
 
-    director, sink, clock = make_director(CommentarySettings(llm_enabled=True), writer=Writer())
+    director, _, clock = make_director(CommentarySettings(llm_enabled=True), writer=Writer())
     await director.submit(ev_started(), state())
     high = await director.step()
     clock.advance(5)
+    await director.submit(PitEntry(address=1), state())
+    normal = await director.step()
+    clock.advance(5)
     await director.submit(Idle(seconds=30), state())
     low = await director.step()
-    assert high is not None and high.source == "template"
-    assert low is not None and low.source == "llm" and low.text == "linea LLM"
-    assert calls == [P.LOW]
+    for line in (high, normal, low):
+        assert line is not None and line.source == "llm" and line.text == "linea LLM"
+    assert calls == [P.HIGH, P.NORMAL, P.LOW]
+
+
+async def test_per_priority_deadline_falls_back_to_template():
+    class Slow:
+        async def write_line(self, candidate, context):
+            await asyncio.sleep(5)
+            return "mai"
+
+    cases = [(ev_started(), 1.5), (PitEntry(address=1), 1.8), (Idle(seconds=30), 2.5)]
+    for event, deadline in cases:
+        director, _, _ = make_director(CommentarySettings(llm_enabled=True), writer=Slow())
+        await director.submit(event, state())
+        t0 = time.monotonic()
+        line = await director.step()
+        elapsed = time.monotonic() - t0
+        assert line is not None and line.source == "template"
+        assert deadline - 0.1 <= elapsed <= deadline + 0.5
+
+
+async def test_generation_overlaps_with_the_line_being_spoken():
+    started = []
+    release = asyncio.Event()
+
+    class Writer:
+        async def write_line(self, candidate, context):
+            started.append(candidate.template_key)
+            if candidate.template_key == "idle":
+                await release.wait()
+            return f"LLM {candidate.template_key}"
+
+    director, _, clock = make_director(CommentarySettings(llm_enabled=True), writer=Writer())
+    await director.submit(ev_finished(), state())
+    first = await director.step()
+    assert first is not None and first.text == "LLM race_finished"
+    await director.submit(Idle(seconds=30), state())
+    await asyncio.sleep(0)
+    assert started == ["race_finished", "idle"]  # started while the first line is speaking
+    release.set()
+    await asyncio.sleep(0)
+    clock.advance(speech_s(first) + 2.0)  # speech over and cooldown passed
+    t0 = time.monotonic()
+    second = await director.step()
+    assert time.monotonic() - t0 < 0.2  # the text was already waiting: no extra latency
+    assert second is not None and second.text == "LLM idle" and second.source == "llm"
+
+
+async def test_stale_or_trimmed_line_cancels_its_llm_task():
+    cancelled = []
+
+    class Writer:
+        async def write_line(self, candidate, context):
+            try:
+                await asyncio.sleep(60)
+            except asyncio.CancelledError:
+                cancelled.append(candidate.template_key)
+                raise
+            return "x"
+
+    director, _, clock = make_director(CommentarySettings(llm_enabled=True), writer=Writer())
+    await director.submit(Idle(seconds=30), state())
+    await asyncio.sleep(0)
+    clock.advance(5)  # past the LOW stale limit
+    assert await director.step() is None
+    await asyncio.sleep(0)
+    assert cancelled == ["idle"]
+    for _ in range(MAX_QUEUE + 1):
+        await director.submit(Idle(seconds=30), state())
+        await asyncio.sleep(0)  # let the task start so the cancel is observable
+    await asyncio.sleep(0)
+    assert len(cancelled) == 2  # the trimmed line's task was cancelled as well
+
+
+async def test_run_cancellation_leaves_no_llm_tasks():
+    class Writer:
+        async def write_line(self, candidate, context):
+            await asyncio.sleep(60)
+            return "x"
+
+    director, _, _ = make_director(
+        CommentarySettings(llm_enabled=True), writer=Writer(), clock=time.monotonic
+    )
+    run = asyncio.create_task(director.run())
+    await director.submit(Idle(seconds=30), state())
+    await director.submit(PitEntry(address=1), state())
+    tasks = [q.task for q in director._queue]
+    assert tasks and all(t is not None for t in tasks)
+    await asyncio.sleep(0.05)  # the loop is now waiting on the first line's LLM text
+    run.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await run
+    await asyncio.sleep(0)
+    assert all(t.cancelled() for t in tasks if t is not None)
+
+
+async def test_context_has_standings_and_recent_lines():
+    seen = []
+
+    class Writer:
+        async def write_line(self, candidate, context):
+            seen.append(context)
+            return f"line {len(seen)}"
+
+    director, _, clock = make_director(CommentarySettings(llm_enabled=True), writer=Writer())
+    await director.submit(ev_started(), state())
+    await director.step()
+    clock.advance(5)
+    await director.submit(PitEntry(address=1), state())
+    await asyncio.sleep(0)
+    ctx = seen[-1]
+    assert [r["driver"] for r in ctx["standings"]] == ["Fulmine", "Blu"]
+    assert ctx["recent_lines"] == ["line 1"]
+    assert ctx["recent_events"][0]["event"] == "race_started"
+    assert ctx["total_laps"] == 10
 
 
 async def test_llm_disabled_never_calls_writer():
@@ -525,3 +641,46 @@ async def test_filtered_track_record_keeps_best_lap():
     )  # NORMAL: dropped at LOW
     await director.submit(first, state())
     assert [q.candidate.template_key for q in director._queue] == ["best_lap_overall"]
+
+
+async def test_high_interrupt_waits_for_the_writer_before_cutting_the_current_line():
+    gate = asyncio.Event()
+
+    class Writer:
+        async def write_line(self, candidate, context):
+            if candidate.template_key == "race_started":
+                await gate.wait()
+            return f"LLM {candidate.template_key}"
+
+    director, sink, clock = make_director(CommentarySettings(llm_enabled=True), writer=Writer())
+    await director.submit(Idle(seconds=30), state())
+    low = await director.step()
+    assert low is not None
+    clock.advance(0.2)
+    await director.submit(ev_started(), state())
+    step = asyncio.create_task(director.step())
+    await asyncio.sleep(0.05)
+    assert not step.done() and sink.stops == []  # the low line is still playing
+    gate.set()
+    high = await step
+    assert high is not None and high.text == "LLM race_started"
+    assert sink.stops == [low.id]
+    assert [x.id for x in sink.lines] == [low.id, high.id]
+
+
+async def test_high_interrupt_speaks_the_template_when_the_deadline_passes():
+    class Writer:
+        async def write_line(self, candidate, context):
+            if candidate.template_key == "race_started":
+                await asyncio.sleep(60)
+            return "LLM"
+
+    director, sink, clock = make_director(CommentarySettings(llm_enabled=True), writer=Writer())
+    await director.submit(Idle(seconds=30), state())
+    low = await director.step()
+    assert low is not None
+    clock.advance(0.2)
+    await director.submit(ev_started(), state())
+    high = await director.step()
+    assert high is not None and high.source == "template"
+    assert sink.stops == [low.id]

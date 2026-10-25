@@ -9,6 +9,11 @@ Limitation: overlap avoidance relies on that duration estimate (or the real mp3 
 when known). The director cannot observe actual playback in the browser, so a slow
 network or a different speaking speed can still produce small gaps or overlaps.
 
+With `llm_enabled`, an LLM writer rewrites EVERY line from the live race situation. The call
+starts when the candidate is queued (a background task), so generation overlaps with the
+line being spoken; at speaking time the director waits at most the per-priority deadline and
+otherwise speaks the template text. Tasks of dropped lines are cancelled.
+
 The scheduling logic lives in `step()` (driven by an injectable clock, deterministic in
 tests); `run()` is just a loop around it. Nothing here raises on TTS/LLM failure.
 """
@@ -21,11 +26,12 @@ import logging
 import shutil
 import time
 import uuid
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.commentary.context import RECENT_LINES, build_context, summarise_event
 from app.commentary.events import Candidate, candidates
 from app.commentary.llm import LineWriter
 from app.commentary.tts import MP3_BYTES_PER_SECOND, BudgetTracker, TTSClient
@@ -54,7 +60,12 @@ MAX_AGE_S = {
 _RANK = {CommentaryPriority.LOW: 0, CommentaryPriority.NORMAL: 1, CommentaryPriority.HIGH: 2}
 AUDIO_HISTORY = 20
 FIRST_CHUNK_TIMEOUT_S = 3.0
-WRITER_TIMEOUT_S = 3.0
+# How long a line may wait for its LLM text, measured from the moment the LLM call started.
+LLM_DEADLINE_S = {
+    CommentaryPriority.HIGH: 1.5,
+    CommentaryPriority.NORMAL: 1.8,
+    CommentaryPriority.LOW: 2.5,
+}
 IDLE_POLL_S = 0.1
 
 LineCallback = Callable[[CommentaryLine], Awaitable[None]]
@@ -113,6 +124,9 @@ class _Queued:
     candidate: Candidate
     created: float
     seq: int
+    context: dict[str, Any] = field(default_factory=dict)
+    task: asyncio.Task[str | None] | None = None
+    task_started: float = 0.0
 
 
 @dataclass
@@ -164,13 +178,18 @@ class CommentaryDirector:
         self._audio: OrderedDict[str, _AudioBuffer] = OrderedDict()
         self._wake = asyncio.Event()
         self._warned_ffplay = False
+        self._spoken: deque[str] = deque(maxlen=RECENT_LINES)
+        self._recent_events: deque[dict[str, Any]] = deque(maxlen=5)
 
     # ------------------------------------------------------------------ public API
 
     def update_settings(self, settings: CommentarySettings) -> None:
         self._settings = settings
         if not settings.enabled:
-            self._queue.clear()
+            self._clear_queue()
+        elif not settings.llm_enabled:
+            for q in self._queue:
+                self._cancel_task(q)
         if self._budget is not None:
             self._budget.update_limits(settings.session_char_budget, settings.monthly_char_budget)
 
@@ -183,20 +202,32 @@ class CommentaryDirector:
         if not self._settings.enabled:
             return
         try:
-            cands = candidates(
-                event, state, self._cars(), self._settings.verbosity, self._settings.language
-            )
+            cars = self._cars()
+            lang = self._settings.language
+            cands = candidates(event, state, cars, self._settings.verbosity, lang)
+            contexts = [
+                build_context(
+                    state, cars, lang, c.address, c.template_key, list(self._recent_events)
+                )
+                for c in cands
+            ]
+            summary = summarise_event(event, cars, lang)
         except Exception:
             log.exception("commentary candidates failed for %s", getattr(event, "type", event))
             return
         if isinstance(event, TrackRecord) and cands:
             # A lap that is a track record is announced once: drop the best-lap lines the same
             # crossing queued just before (the controller emits TrackRecord after BestLap).
-            self._queue = [q for q in self._queue if not _superseded_by(q.candidate, event)]
+            self._remove_where(lambda q: _superseded_by(q.candidate, event))
         now = self._clock()
-        for cand in cands:
+        self._recent_events.append(summary)
+        for cand, ctx in zip(cands, contexts, strict=True):
             self._seq += 1
-            self._queue.append(_Queued(cand, now, self._seq))
+            item = _Queued(cand, now, self._seq, ctx)
+            if self._settings.llm_enabled and getattr(self._writer, "available", True):
+                item.task = asyncio.create_task(self._generate(cand, ctx))
+                item.task_started = now
+            self._queue.append(item)
         self._trim_queue()
         if cands:
             self._wake.set()
@@ -219,6 +250,7 @@ class CommentaryDirector:
                 with contextlib.suppress(TimeoutError):
                     await asyncio.wait_for(self._wake.wait(), IDLE_POLL_S)
         finally:
+            self._clear_queue()
             await self._cancel_current()
             await self._kill_lingering()
 
@@ -227,7 +259,7 @@ class CommentaryDirector:
     async def step(self) -> CommentaryLine | None:
         """One scheduling decision. Returns the line started now, if any."""
         if not self._settings.enabled:
-            self._queue.clear()
+            self._clear_queue()
             return None
         now = self._clock()
         self._drop_stale(now)
@@ -241,24 +273,67 @@ class CommentaryDirector:
         best = max(self._queue, key=lambda q: (_RANK[q.candidate.priority], -q.seq))
         high = best.candidate.priority == CommentaryPriority.HIGH
         if cur is not None:
-            if high and cur.priority != CommentaryPriority.HIGH:
-                await self._interrupt()
-            else:
+            if not (high and cur.priority != CommentaryPriority.HIGH):
                 return None
+            # Compose FIRST so the current line keeps playing while the LLM answers; only
+            # then cut it and speak, with no dead air in between.
+            self._queue.remove(best)
+            text, source = await self._compose_text(best)
+            if self._current is cur:
+                if self._clock() < cur.busy_until:
+                    await self._interrupt()
+                else:
+                    self._last_end = cur.busy_until
+                    await self._cancel_current(stopped=False)
+            return await self._emit(best, text, source)
         else:
             cooldown = COOLDOWN_HIGH_S if high else COOLDOWN_S
             if now < self._last_end + cooldown:
                 return None
         self._queue.remove(best)
-        return await self._speak(best)
+        text, source = await self._compose_text(best)
+        return await self._emit(best, text, source)
+
+    # ------------------------------------------------------------------ queue + LLM tasks
+
+    @staticmethod
+    def _cancel_task(item: _Queued) -> None:
+        task, item.task = item.task, None
+        if task is not None and not task.done():
+            task.cancel()
+
+    def _remove_where(self, predicate: Callable[[_Queued], bool]) -> None:
+        kept: list[_Queued] = []
+        for q in self._queue:
+            if predicate(q):
+                self._cancel_task(q)
+            else:
+                kept.append(q)
+        self._queue = kept
+
+    def _clear_queue(self) -> None:
+        self._remove_where(lambda _q: True)
 
     def _drop_stale(self, now: float) -> None:
-        self._queue = [q for q in self._queue if now - q.created <= MAX_AGE_S[q.candidate.priority]]
+        self._remove_where(lambda q: now - q.created > MAX_AGE_S[q.candidate.priority])
 
     def _trim_queue(self) -> None:
         while len(self._queue) > MAX_QUEUE:
             victim = min(self._queue, key=lambda q: (_RANK[q.candidate.priority], q.seq))
             self._queue.remove(victim)
+            self._cancel_task(victim)
+
+    async def _generate(self, cand: Candidate, context: dict[str, Any]) -> str | None:
+        """Background LLM call for one queued candidate. Never raises (except cancellation)."""
+        ctx = {**context, "recent_lines": list(self._spoken)}
+        try:
+            text = await self._writer.write_line(cand, ctx)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.warning("line writer failed, using template text")
+            return None
+        return (text or "").strip() or None
 
     async def _interrupt(self) -> None:
         cur = self._current
@@ -310,19 +385,28 @@ class CommentaryDirector:
     def _estimate_s(self, text: str) -> float:
         return max(MIN_DURATION_S, len(text) / CHARS_PER_SECOND)
 
-    async def _compose_text(self, cand: Candidate) -> tuple[str, str]:
-        if cand.priority != CommentaryPriority.LOW or not self._settings.llm_enabled:
+    async def _compose_text(self, item: _Queued) -> tuple[str, str]:
+        cand = item.candidate
+        task, item.task = item.task, None
+        if task is None:
+            return cand.text, "template"
+        if not self._settings.llm_enabled:
+            task.cancel()
             return cand.text, "template"
         try:
-            text = await asyncio.wait_for(
-                self._writer.write_line(cand, {}), timeout=WRITER_TIMEOUT_S
-            )
+            if not task.done():
+                budget = LLM_DEADLINE_S[cand.priority] - (self._clock() - item.task_started)
+                await asyncio.wait_for(asyncio.shield(task), timeout=max(0.0, budget))
+            text = task.result()
         except asyncio.CancelledError:
+            task.cancel()
             raise
-        except Exception:
-            log.warning("line writer failed, using template text")
+        except TimeoutError:
+            task.cancel()
+            log.info("LLM line too slow, using template text")
             return cand.text, "template"
-        text = (text or "").strip()
+        except Exception:
+            return cand.text, "template"
         if not text:
             return cand.text, "template"
         return text, ("template" if text == cand.text else "llm")
@@ -398,9 +482,8 @@ class CommentaryDirector:
         if buf.size:
             cur.busy_until = cur.started + buf.size / self._bps
 
-    async def _speak(self, item: _Queued) -> CommentaryLine | None:
+    async def _emit(self, item: _Queued, text: str, source: str) -> CommentaryLine | None:
         cand = item.candidate
-        text, source = await self._compose_text(cand)
         line_id = uuid.uuid4().hex[:12]
         start = self._clock()
         audio = await self._start_audio(cand, text, line_id)
@@ -433,6 +516,7 @@ class CommentaryDirector:
             busy_until=start + self._estimate_s(text),
         )
         self._current = cur
+        self._spoken.append(text)
         if audio is not None and buf is not None:
             cur.tasks.append(audio[1])
             if use_local:

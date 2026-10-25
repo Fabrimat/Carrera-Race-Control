@@ -1,0 +1,169 @@
+"""Compact, verbalised race context for the LLM writer.
+
+Everything the model may talk about is gathered here: the live standings, the involved
+car, the records and the latest events. All times are spelled out in the target language
+with `speech.py` (so the TTS reads them naturally); raw millisecond values never reach
+the prompt.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from app.commentary import speech
+from app.race.models import (
+    BestLap,
+    CarConfig,
+    CarState,
+    LapCompleted,
+    PositionChange,
+    RaceEvent,
+    RaceFinished,
+    RaceMode,
+    RaceStarted,
+    RaceState,
+    TrackRecord,
+)
+
+TOP_N = 3
+RECENT_EVENTS = 5
+RECENT_LINES = 4
+_FUEL_EVENTS = frozenset({"low_fuel", "pit_entry", "pit_exit"})
+
+
+def _name(address: int, cars: dict[int, CarConfig]) -> str:
+    car = cars.get(address)
+    if car is None:
+        return str(address + 1)
+    return car.nickname or car.name
+
+
+_FUEL_WORDS = {
+    "it": ("quasi a secco", "riserva", "metà", "pieno"),
+    "en": ("almost empty", "low", "half", "full"),
+}
+_FUEL_FULL_FROM = 12
+
+
+def fuel_state(fuel: int | None, low_threshold: int, lang: str) -> str | None:
+    """Qualitative fuel (the raw 0..15 level is never given to the model)."""
+    if fuel is None:
+        return None
+    words = _FUEL_WORDS.get(lang, _FUEL_WORDS["it"])
+    if fuel <= low_threshold // 2:
+        return words[0]
+    if fuel <= low_threshold:
+        return words[1]
+    return words[3] if fuel >= _FUEL_FULL_FROM else words[2]
+
+
+def verbalise_facts(facts: dict[str, Any], lang: str) -> dict[str, Any]:
+    """Replace `*_ms` values by spoken times (`lap_ms` -> `lap_time`)."""
+    out: dict[str, Any] = {}
+    for key, value in facts.items():
+        if key.endswith("_ms") and isinstance(value, int) and not isinstance(value, bool):
+            out[key[:-3] + "_time"] = speech.say_lap_time(value, lang)
+        elif key == "fuel":
+            continue  # never pass the raw number: the context carries a qualitative fuel_state
+        else:
+            out[key] = value
+    return out
+
+
+def summarise_event(event: RaceEvent, cars: dict[int, CarConfig], lang: str) -> dict[str, Any]:
+    """One short line of history for the "recent events" list."""
+    summary: dict[str, Any] = {"event": event.type}
+    address = getattr(event, "address", None)
+    if address is not None:
+        summary["driver"] = _name(address, cars)
+    if isinstance(event, LapCompleted):
+        summary["lap"] = event.lap_number
+        summary["lap_time"] = speech.say_lap_time(event.lap_ms, lang)
+    elif isinstance(event, BestLap):
+        summary["lap_time"] = speech.say_lap_time(event.lap_ms, lang)
+        summary["overall"] = event.overall
+    elif isinstance(event, TrackRecord):
+        summary["lap_time"] = speech.say_lap_time(event.lap_ms, lang)
+    elif isinstance(event, PositionChange):
+        summary["new_position"] = event.new_position
+        if event.passed_address is not None:
+            summary["passed"] = _name(event.passed_address, cars)
+    elif isinstance(event, RaceFinished) and event.winner is not None:
+        summary["winner"] = _name(event.winner, cars)
+    elif isinstance(event, RaceStarted):
+        summary["mode"] = event.mode.value
+    return summary
+
+
+def _car_summary(car: CarState, cars: dict[int, CarConfig], lang: str) -> dict[str, Any]:
+    info: dict[str, Any] = {"driver": _name(car.address, cars), "laps": car.laps}
+    if car.position is not None:
+        info["position"] = car.position
+    if car.last_lap_ms is not None:
+        info["last_lap"] = speech.say_lap_time(car.last_lap_ms, lang)
+    if car.best_lap_ms is not None:
+        info["best_lap"] = speech.say_lap_time(car.best_lap_ms, lang)
+    return info
+
+
+def build_context(
+    state: RaceState,
+    cars: dict[int, CarConfig],
+    lang: str,
+    address: int | None,
+    event_key: str,
+    recent_events: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """The live situation around one commentary candidate."""
+    cfg = state.config
+    ctx: dict[str, Any] = {"mode": cfg.mode.value, "phase": state.phase.value}
+    placed = [c for c in state.cars if c.position is not None]
+    leader = min(placed, key=lambda c: c.position or 99, default=None)
+    if cfg.mode == RaceMode.LAPS:
+        if leader is not None:
+            ctx["leader_lap"] = min(leader.laps + 1, cfg.target_laps)
+        ctx["total_laps"] = cfg.target_laps
+        if state.remaining_laps is not None:
+            ctx["laps_to_go"] = state.remaining_laps
+    elif cfg.mode == RaceMode.TIMED and state.remaining_ms is not None:
+        ctx["time_remaining"] = speech.say_lap_time(max(0, state.remaining_ms), lang)
+
+    standings: list[dict[str, Any]] = []
+    for car in sorted(placed, key=lambda c: c.position or 99)[:TOP_N]:
+        row = _car_summary(car, cars, lang)
+        if car.gap_to_leader_laps > 0:
+            row["laps_behind"] = car.gap_to_leader_laps
+        elif car.gap_to_leader_ms and car.position != 1:
+            row["gap_to_leader"] = speech.say_gap(car.gap_to_leader_ms, lang)
+        standings.append(row)
+    if standings:
+        ctx["standings"] = standings
+
+    involved = next((c for c in state.cars if c.address == address), None)
+    if involved is not None:
+        car_info = _car_summary(involved, cars, lang)
+        if involved.gap_to_ahead_ms and involved.position not in (None, 1):
+            car_info["gap_to_car_ahead"] = speech.say_gap(involved.gap_to_ahead_ms, lang)
+        if event_key in _FUEL_EVENTS:
+            fuel = fuel_state(involved.fuel, cfg.low_fuel_threshold, lang)
+            if fuel is None and event_key == "low_fuel":
+                fuel = fuel_state(0, cfg.low_fuel_threshold, lang)
+            if fuel is not None:
+                car_info["fuel_state"] = fuel
+            car_info["pit_stops"] = involved.pit_stops
+            car_info["in_pit"] = involved.in_pit
+        ctx["involved_car"] = car_info
+
+    if state.best_lap is not None:
+        ctx["best_lap_overall"] = {
+            "driver": _name(state.best_lap.address, cars),
+            "time": speech.say_lap_time(state.best_lap.lap_ms, lang),
+        }
+    if state.track_record is not None:
+        ctx["track_record"] = {
+            "holder": state.track_record.holder_name,
+            "time": speech.say_lap_time(state.track_record.lap_ms, lang),
+        }
+    if recent_events:
+        ctx["recent_events"] = recent_events[-RECENT_EVENTS:]
+    return ctx
