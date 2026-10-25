@@ -3,6 +3,7 @@ import { ConnectionBar } from '../components/ConnectionBar'
 import { EventLog } from '../components/EventLog'
 import { LazyLapChart } from '../components/LazyLapChart'
 import { Leaderboard } from '../components/Leaderboard'
+import { TrackMap } from '../components/TrackMap'
 import { RaceClock } from '../components/RaceClock'
 import { TrackRecordPanel } from '../components/TrackRecordPanel'
 import { RaceControls } from '../components/RaceControls'
@@ -33,8 +34,17 @@ export function Dashboard() {
         </section>
       )}
       <section className="rounded-lg border border-line bg-panel-2/40 p-3" aria-label={t('leaderboard.title')}>
-        <Leaderboard cars={race.cars} bestLap={race.best_lap} trackRecord={race.track_record} fuelMode={race.fuel_mode} editable />
+        <Leaderboard
+          cars={race.cars}
+          bestLap={race.best_lap}
+          trackRecord={race.track_record}
+          fuelMode={race.fuel_mode}
+          editable
+          numSectors={race.num_sectors}
+          bestSectors={race.best_sectors}
+        />
       </section>
+      <TrackMap />
       <div className="grid gap-4 xl:grid-cols-[2fr_1fr]">
         <section className="rounded-lg border border-line bg-panel p-4">
           <h2 className="mb-2 text-sm font-bold uppercase tracking-widest text-dim">{t('chart.title')}</h2>

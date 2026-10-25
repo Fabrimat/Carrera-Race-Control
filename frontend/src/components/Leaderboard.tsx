@@ -11,6 +11,10 @@ interface Props {
   trackRecord?: TrackRecordInfo | null
   fuelMode: boolean
   large?: boolean
+  /** Number of sectors (1 = no Check Lanes: no sector columns). */
+  numSectors?: number
+  /** Overall best time of each sector (purple). */
+  bestSectors?: (number | null)[]
   /** Allow renaming cars inline (click, Enter or F2). Off in TV mode. */
   editable?: boolean
 }
@@ -128,14 +132,61 @@ function FuelBar({ fuel }: { fuel: number }) {
   )
 }
 
-export function Leaderboard({ cars, bestLap, trackRecord = null, fuelMode, large = false, editable = false }: Props) {
+/** Sector cell: the live sector of the current lap, else the one of the last lap (dimmed). */
+function SectorCell({
+  index,
+  car,
+  overall,
+}: {
+  index: number
+  car: CarState
+  overall: number | null
+}) {
+  const f = useFormat()
+  const live = car.current_sectors[index] ?? null
+  const value = live ?? car.last_sectors[index] ?? null
+  const isOverall = value !== null && overall !== null && value === overall
+  const isPersonal = !isOverall && value !== null && value === (car.best_sectors[index] ?? null)
+  const tone = isOverall ? 'font-bold text-purple' : isPersonal ? 'font-bold text-go' : live === null ? 'text-dim' : ''
+  return (
+    <span
+      role="cell"
+      data-testid={`sector-${index + 1}`}
+      data-overall={isOverall ? 'true' : 'false'}
+      data-personal={isPersonal ? 'true' : 'false'}
+      data-live={live !== null ? 'true' : 'false'}
+      className={`num text-right text-[0.7em] ${tone}`}
+    >
+      {value !== null ? f.lap(value) : '–'}
+    </span>
+  )
+}
+
+export function Leaderboard({
+  cars,
+  bestLap,
+  trackRecord = null,
+  fuelMode,
+  large = false,
+  editable = false,
+  numSectors = 1,
+  bestSectors = [],
+}: Props) {
   const t = useT()
   const f = useFormat()
   const rows = sortCars(cars)
   const ref = useFlip(rows.map((c) => c.address).join(','))
-  const cols = fuelMode
-    ? 'grid-cols-[3.5rem_minmax(0,1.6fr)_4rem_1fr_1fr_1fr_8rem]'
-    : 'grid-cols-[3.5rem_minmax(0,1.6fr)_4rem_1fr_1fr_1fr]'
+  const sectors = numSectors > 1 ? numSectors : 0
+  const cols = sectors
+    ? ''
+    : fuelMode
+      ? 'grid-cols-[3.5rem_minmax(0,1.6fr)_4rem_1fr_1fr_1fr_8rem]'
+      : 'grid-cols-[3.5rem_minmax(0,1.6fr)_4rem_1fr_1fr_1fr]'
+  const gridStyle = sectors
+    ? {
+        gridTemplateColumns: `3.5rem minmax(0,1.6fr) 4rem 1fr 1fr ${'minmax(0,0.7fr) '.repeat(sectors)}1fr${fuelMode ? ' 8rem' : ''}`,
+      }
+    : undefined
   const text = large ? 'text-4xl' : 'text-2xl'
   const head = 'text-xs uppercase tracking-widest text-dim'
 
@@ -145,12 +196,17 @@ export function Leaderboard({ cars, bestLap, trackRecord = null, fuelMode, large
 
   return (
     <div ref={ref} role="table" aria-label={t('leaderboard.title')} className="w-full">
-      <div role="row" className={`grid ${cols} items-end gap-3 px-3 pb-2 ${head}`}>
+      <div role="row" style={gridStyle} className={`grid ${cols} items-end gap-3 px-3 pb-2 ${head}`}>
         <span role="columnheader">{t('leaderboard.pos')}</span>
         <span role="columnheader">{t('leaderboard.driver')}</span>
         <span role="columnheader" className="text-right">{t('leaderboard.laps')}</span>
         <span role="columnheader" className="text-right">{t('leaderboard.last')}</span>
         <span role="columnheader" className="text-right">{t('leaderboard.best')}</span>
+        {Array.from({ length: sectors }, (_, i) => (
+          <span key={i} role="columnheader" className="text-right" title={t('sectors.title')}>
+            {t('sectors.s', { n: i + 1 })}
+          </span>
+        ))}
         <span role="columnheader" className="text-right">{t('leaderboard.gap')}</span>
         {fuelMode && <span role="columnheader">{t('leaderboard.fuel')}</span>}
       </div>
@@ -168,10 +224,10 @@ export function Leaderboard({ cars, bestLap, trackRecord = null, fuelMode, large
             <div
               key={c.address}
               role="row"
+              style={{ ...gridStyle, borderLeft: `8px solid ${c.color}` }}
               data-addr={c.address}
               data-testid="leaderboard-row"
               className={`grid ${cols} items-center gap-3 rounded-md border border-line bg-panel px-3 py-2 ${text}`}
-              style={{ borderLeft: `8px solid ${c.color}` }}
             >
               <span role="cell" className="num font-bold">{c.position ?? '–'}</span>
               <span role="cell" className="flex min-w-0 items-center gap-3 font-semibold">
@@ -217,6 +273,9 @@ export function Leaderboard({ cars, bestLap, trackRecord = null, fuelMode, large
               >
                 {f.lap(c.best_lap_ms)}
               </span>
+              {Array.from({ length: sectors }, (_, i) => (
+                <SectorCell key={i} index={i} car={c} overall={bestSectors[i] ?? null} />
+              ))}
               <span role="cell" className="num text-right" data-testid="gap">{gap}</span>
               {fuelMode && (
                 <span role="cell">{c.fuel !== null ? <FuelBar fuel={c.fuel} /> : null}</span>

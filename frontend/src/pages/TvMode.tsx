@@ -1,4 +1,5 @@
 import { Leaderboard } from '../components/Leaderboard'
+import { TrackMap } from '../components/TrackMap'
 import { RaceClock } from '../components/RaceClock'
 import { StartLights } from '../components/StartLights'
 import { useT } from '../i18n/useT'
@@ -28,7 +29,18 @@ export function TvMode() {
           </button>
         </div>
       </div>
-      <Leaderboard cars={race.cars} bestLap={race.best_lap} trackRecord={race.track_record} fuelMode={race.fuel_mode} large />
+      <div className="grid gap-6 xl:grid-cols-[3fr_2fr]">
+        <Leaderboard
+          cars={race.cars}
+          bestLap={race.best_lap}
+          trackRecord={race.track_record}
+          fuelMode={race.fuel_mode}
+          numSectors={race.num_sectors}
+          bestSectors={race.best_sectors}
+          large
+        />
+        <TrackMap />
+      </div>
       <div className="mt-auto rounded-lg border border-line bg-panel p-6 text-4xl" data-testid="tv-commentary">
         {latest ? latest.text : <span className="text-dim">{t('commentary.empty')}</span>}
       </div>

@@ -207,6 +207,17 @@ export const it: Messages = {
   'sfx.toggle': 'Effetti',
   'sfx.volume': 'Volume effetti',
 
+  'map.title': 'Mappa della pista in diretta',
+  'map.loading': 'Caricamento della mappa...',
+  'map.empty': 'Nessuna mappa per il tracciato "{name}".',
+  'map.draw': 'Disegna la tua pista',
+  'map.error': 'Impossibile caricare la mappa della pista.',
+  'map.aria': 'Mappa in diretta della pista con le auto',
+  'map.car': '{name}, posizione {pos}',
+  'map.stale': 'posizione incerta',
+  'sectors.s': 'S{n}',
+  'sectors.title': 'Tempi di settore',
+
   'language.en': 'English',
   'language.it': 'Italiano',
 

@@ -206,6 +206,17 @@ export const en = {
   'sfx.toggle': 'Effects',
   'sfx.volume': 'Effects volume',
 
+  'map.title': 'Live track map',
+  'map.loading': 'Loading the track map...',
+  'map.empty': 'No track map for layout "{name}" yet.',
+  'map.draw': 'Draw your track',
+  'map.error': 'Could not load the track map.',
+  'map.aria': 'Live map of the track with the cars',
+  'map.car': '{name}, position {pos}',
+  'map.stale': 'position uncertain',
+  'sectors.s': 'S{n}',
+  'sectors.title': 'Sector times',
+
   'language.en': 'English',
   'language.it': 'Italiano',
 
