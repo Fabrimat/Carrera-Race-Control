@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useFormat, useT } from '../../i18n/useT'
+import { api } from '../../lib/api'
 import { advance, dismiss, emptyQueue, enqueue, nextWake, type Banner, type QueueState } from '../../lib/bannerQueue'
 import {
   bannerForEvent,
@@ -7,9 +8,9 @@ import {
   controlBanner,
   finalLapBanner,
   isFinalLap,
+  sessionResultBanner,
   type BannerContext,
 } from '../../lib/tvBanners'
-import { api } from '../../lib/api'
 import { photoVersion } from '../../lib/drivers'
 import { useStore } from '../../lib/store'
 import type { CarState } from '../../lib/types'
@@ -53,6 +54,7 @@ export function useBanners(codes: Map<number, string>): BannerView | null {
     const seen = new WeakSet<object>(useStore.getState().events)
     let prev = useStore.getState().race
     let finalFor: number | null = null
+    let sessionBannerId: string | null = null
     if (prev.phase === 'finished') push(chequeredBanner(prev, context()))
 
     return useStore.subscribe((s) => {
@@ -60,6 +62,23 @@ export function useBanners(codes: Map<number, string>): BannerView | null {
         if (seen.has(e)) continue
         seen.add(e)
         push(bannerForEvent(e, context()))
+        if (e.type === 'session_finished') {
+          const sid = e.session_id
+          api.event().then((ev) => {
+            const result = ev.results.find((r) => r.session_id === sid)
+            if (!result) return
+            const c = context()
+            const info = useStore.getState().race.session
+            const title = info?.name.trim() || c.t(`ev.kind.${result.kind}`)
+            const banner = sessionResultBanner(result, title, c)
+            const at = performance.now()
+            // The session card replaces the plain chequered podium of the same race.
+            setQueue((q) => dismiss(q, `chequered:${useStore.getState().race.race_id}`, at))
+            sessionBannerId = banner.id
+            setQueue((q) => enqueue(q, banner, at))
+            setClock(at)
+          }, () => undefined)
+        }
       }
       const race = s.race
       if (race === prev) return
@@ -74,6 +93,8 @@ export function useBanners(codes: Map<number, string>): BannerView | null {
         const id = `chequered:${prev.race_id}`
         const at = performance.now()
         setQueue((q) => dismiss(q, id, at))
+        if (sessionBannerId) setQueue((q) => dismiss(q, sessionBannerId as string, at))
+        sessionBannerId = null
         setClock(at)
       }
       prev = race

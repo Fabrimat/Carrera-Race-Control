@@ -68,6 +68,7 @@
   animation: tv-blink 1.4s ease-in-out infinite;
 }
 @keyframes tv-blink { 50% { opacity: 0.25; } }
+.tv-session { font-weight: 800; letter-spacing: 0.16em; text-transform: uppercase; color: var(--tv-ink); font-size: 1em; padding: 0.15em 0.8em; border: 1px solid var(--tv-dim); border-radius: 0.3em; }
 .tv-mode { font-weight: 700; letter-spacing: 0.22em; text-transform: uppercase; color: var(--tv-dim); font-size: 1em; }
 
 .tv-centre { display: flex; align-items: center; gap: 1.4em; }
@@ -208,6 +209,7 @@
 .tv-banner[data-kind='pit_in'], .tv-banner[data-kind='pit_out'] { --accent: var(--color-amber); --accent-ink: #1a1100; }
 .tv-banner[data-kind='low_fuel'] { --accent: var(--color-signal); }
 .tv-banner[data-kind='control'] { --accent: var(--color-amber); --accent-ink: #1a1100; }
+.tv-banner[data-kind='false_start'] { --accent: var(--color-signal); --accent-ink: #fff; }
 .tv-banner[data-kind='final_lap'] { --accent: #fff; --accent-ink: #000; }
 .tv-banner-tag {
   display: grid; place-items: center; padding: 0 1.2em; min-width: 4.6em; font-size: 1.7em; font-weight: 800;
@@ -255,6 +257,8 @@
 .tv-card[data-kind='track_record'] { --accent: var(--color-gold); }
 .tv-card[data-kind='final_lap'] { --accent: #fff; }
 .tv-card[data-kind='chequered'] { --accent: #fff; min-width: 54em; }
+.tv-card[data-kind='session_result'] { --accent: var(--color-amber); min-width: 54em; }
+.tv-podium-note { margin-left: 0.8em; font-style: normal; font-size: 0.75em; color: var(--color-signal); }
 .tv-card-title {
   font-size: 4.6em; font-weight: 800; font-style: italic; text-transform: uppercase; line-height: 1; letter-spacing: 0.04em;
   color: var(--tv-ink); text-shadow: 0 0 0.4em color-mix(in srgb, var(--accent) 45%, transparent);

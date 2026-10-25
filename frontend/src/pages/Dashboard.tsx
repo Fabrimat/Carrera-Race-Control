@@ -10,6 +10,7 @@ import { TrackMap } from '../components/TrackMap'
 import { RaceClock } from '../components/RaceClock'
 import { TrackRecordPanel } from '../components/TrackRecordPanel'
 import { RaceControls } from '../components/RaceControls'
+import { SessionBar } from '../components/event/SessionBar'
 import { StartLights } from '../components/StartLights'
 import { useT } from '../i18n/useT'
 import { openTvWindow } from '../lib/desktop'
@@ -49,7 +50,9 @@ export function Dashboard() {
       data-testid="dashboard"
       className="flex flex-col gap-3 p-3 min-[1200px]:grid min-[1200px]:h-full min-[1200px]:grid-rows-[auto_minmax(0,1.45fr)_minmax(0,1fr)] min-[1200px]:overflow-hidden min-[1200px]:gap-2"
     >
-      {/* band 1: connection, clock and lights, race controls */}
+      {/* band 1: event session bar (only when relevant), then connection, clock and lights, race controls */}
+      <div className="flex min-w-0 flex-col gap-2">
+      <SessionBar />
       <div
         data-testid="dashboard-top"
         className="grid gap-2 min-[1200px]:grid-cols-[minmax(0,1fr)_auto_auto] min-[1200px]:items-stretch"
@@ -80,6 +83,7 @@ export function Dashboard() {
           </button>
         </section>
         <RaceControls compact />
+      </div>
       </div>
 
       {/* band 2: leaderboard (with sectors) and the live map */}

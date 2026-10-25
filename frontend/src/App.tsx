@@ -16,6 +16,7 @@ const HistoryDetail = lazy(() => import('./pages/History').then((m) => ({ defaul
 const SettingsPage = lazy(() => import('./pages/SettingsPage').then((m) => ({ default: m.SettingsPage })))
 const Drivers = lazy(() => import('./pages/Drivers').then((m) => ({ default: m.Drivers })))
 const TvMode = lazy(() => import('./pages/TvMode').then((m) => ({ default: m.TvMode })))
+const EventPage = lazy(() => import('./pages/EventPage').then((m) => ({ default: m.EventPage })))
 const TrackEditor = lazy(() => import('./pages/TrackEditor').then((m) => ({ default: m.TrackEditor })))
 
 export default function App() {
@@ -78,6 +79,7 @@ export default function App() {
           {route.name === 'history-detail' && <HistoryDetail id={route.id} />}
           {route.name === 'settings' && <SettingsPage />}
           {route.name === 'drivers' && <Drivers />}
+          {route.name === 'event' && <EventPage />}
           {route.name === 'tv' && <TvMode />}
           {route.name === 'track' && <TrackEditor layout={route.layout} />}
         </Suspense>

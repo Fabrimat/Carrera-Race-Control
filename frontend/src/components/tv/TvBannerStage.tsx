@@ -10,6 +10,7 @@ const GLYPH: Partial<Record<BannerKind, string>> = {
   pit_out: 'PIT',
   low_fuel: '!',
   control: 'RC',
+  false_start: 'FS',
 }
 
 function LowerThird({ banner, exiting }: BannerView) {
@@ -45,6 +46,7 @@ function Results({ banner }: { banner: Banner }) {
           <span className="tv-podium-best">
             <small>{t('tv.results.best')}</small>
             {r.best}
+            {r.note && <em className="tv-podium-note">{r.note}</em>}
           </span>
         </div>
       ))}
@@ -57,7 +59,7 @@ function Card({ banner, exiting }: BannerView) {
     <div className="tv-card" data-testid="tv-card" data-kind={banner.kind} data-exiting={exiting} role="status">
       <div className="tv-card-title">{banner.title}</div>
       {banner.subtitle && <div className="tv-card-sub">{banner.subtitle}</div>}
-      {banner.kind === 'chequered' && <Results banner={banner} />}
+      {(banner.kind === 'chequered' || banner.kind === 'session_result') && <Results banner={banner} />}
     </div>
   )
 }

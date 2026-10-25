@@ -7,6 +7,7 @@ export type Route =
   | { name: 'settings' }
   | { name: 'tv' }
   | { name: 'drivers' }
+  | { name: 'event' }
   | { name: 'track'; layout: string | null }
 
 export function parseHash(hash: string): Route {
@@ -17,6 +18,7 @@ export function parseHash(hash: string): Route {
   if (path === '/settings') return { name: 'settings' }
   if (path === '/tv') return { name: 'tv' }
   if (path === '/drivers') return { name: 'drivers' }
+  if (path === '/event') return { name: 'event' }
   if (path === '/track') return { name: 'track', layout: null }
   const tm = /^\/track\/(.+)$/.exec(path)
   if (tm) {
