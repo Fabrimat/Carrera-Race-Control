@@ -1,0 +1,71 @@
+{"t": 1.0, "kind": "status", "fuel": [15, 15, 15, 15, 15, 15, 15, 15], "start": 1, "mode": 5, "pit": [false, false, false, false, false, false, false, false], "display": 6}
+{"t": 2.0, "kind": "status", "fuel": [15, 15, 15, 15, 15, 15, 15, 15], "start": 2, "mode": 5, "pit": [false, false, false, false, false, false, false, false], "display": 6}
+{"t": 3.0, "kind": "status", "fuel": [15, 15, 15, 15, 15, 15, 15, 15], "start": 3, "mode": 5, "pit": [false, false, false, false, false, false, false, false], "display": 6}
+{"t": 4.0, "kind": "status", "fuel": [15, 15, 15, 15, 15, 15, 15, 15], "start": 4, "mode": 5, "pit": [false, false, false, false, false, false, false, false], "display": 6}
+{"t": 5.0, "kind": "status", "fuel": [15, 15, 15, 15, 15, 15, 15, 15], "start": 5, "mode": 5, "pit": [false, false, false, false, false, false, false, false], "display": 6}
+{"t": 6.0, "kind": "status", "fuel": [15, 15, 15, 15, 15, 15, 15, 15], "start": 6, "mode": 5, "pit": [false, false, false, false, false, false, false, false], "display": 6}
+{"t": 8.0, "kind": "status", "fuel": [15, 15, 15, 15, 15, 15, 15, 15], "start": 7, "mode": 5, "pit": [false, false, false, false, false, false, false, false], "display": 6}
+{"t": 8.5, "kind": "status", "fuel": [15, 15, 15, 15, 15, 15, 15, 15], "start": 0, "mode": 5, "pit": [false, false, false, false, false, false, false, false], "display": 6}
+{"t": 8.95, "kind": "timer", "address": 0, "timestamp": 4294960900, "sector": 1}
+{"t": 9.0, "kind": "status", "fuel": [15, 15, 15, 15, 15, 15, 15, 15], "start": 0, "mode": 5, "pit": [false, false, false, false, false, false, false, false], "display": 6}
+{"t": 9.3, "kind": "timer", "address": 1, "timestamp": 4294961250, "sector": 1}
+{"t": 9.65, "kind": "timer", "address": 2, "timestamp": 4294961599, "sector": 1}
+{"t": 10.0, "kind": "timer", "address": 3, "timestamp": 4294961949, "sector": 1}
+{"t": 10.0, "kind": "status", "fuel": [15, 15, 15, 15, 15, 15, 15, 15], "start": 0, "mode": 5, "pit": [false, false, false, false, false, false, false, false], "display": 6}
+{"t": 11.0, "kind": "status", "fuel": [15, 15, 15, 15, 15, 15, 15, 15], "start": 0, "mode": 5, "pit": [false, false, false, false, false, false, false, false], "display": 6}
+{"t": 12.0, "kind": "status", "fuel": [15, 15, 15, 15, 15, 15, 15, 15], "start": 0, "mode": 5, "pit": [false, false, false, false, false, false, false, false], "display": 6}
+{"t": 13.0, "kind": "status", "fuel": [15, 15, 15, 15, 15, 15, 15, 15], "start": 0, "mode": 5, "pit": [false, false, false, false, false, false, false, false], "display": 6}
+{"t": 14.0, "kind": "status", "fuel": [14, 14, 14, 14, 15, 15, 15, 15], "start": 0, "mode": 5, "pit": [false, false, false, false, false, false, false, false], "display": 6}
+{"t": 14.997, "kind": "timer", "address": 0, "timestamp": 4294966947, "sector": 1}
+{"t": 15.0, "kind": "status", "fuel": [14, 14, 14, 14, 15, 15, 15, 15], "start": 0, "mode": 5, "pit": [false, false, false, false, false, false, false, false], "display": 6}
+{"t": 15.76, "kind": "timer", "address": 1, "timestamp": 413, "sector": 1}
+{"t": 16.0, "kind": "status", "fuel": [14, 14, 14, 14, 15, 15, 15, 15], "start": 0, "mode": 5, "pit": [false, false, false, false, false, false, false, false], "display": 6}
+{"t": 16.421, "kind": "timer", "address": 2, "timestamp": 1074, "sector": 1}
+{"t": 17.0, "kind": "status", "fuel": [14, 14, 14, 14, 15, 15, 15, 15], "start": 0, "mode": 5, "pit": [false, false, false, false, false, false, false, false], "display": 6}
+{"t": 17.317, "kind": "timer", "address": 3, "timestamp": 1970, "sector": 1}
+{"t": 18.0, "kind": "status", "fuel": [14, 14, 14, 14, 15, 15, 15, 15], "start": 0, "mode": 5, "pit": [false, false, false, false, false, false, false, false], "display": 6}
+{"t": 19.0, "kind": "status", "fuel": [14, 14, 14, 14, 15, 15, 15, 15], "start": 0, "mode": 5, "pit": [false, false, false, false, false, false, false, false], "display": 6}
+{"t": 20.0, "kind": "status", "fuel": [13, 13, 13, 13, 15, 15, 15, 15], "start": 0, "mode": 5, "pit": [false, false, false, false, false, false, false, false], "display": 6}
+{"t": 20.992, "kind": "timer", "address": 0, "timestamp": 5646, "sector": 1}
+{"t": 21.0, "kind": "status", "fuel": [13, 13, 13, 13, 15, 15, 15, 15], "start": 0, "mode": 5, "pit": [false, false, false, false, false, false, false, false], "display": 6}
+{"t": 22.0, "kind": "status", "fuel": [13, 13, 13, 13, 15, 15, 15, 15], "start": 0, "mode": 5, "pit": [false, false, false, false, false, false, false, false], "display": 6}
+{"t": 22.127, "kind": "timer", "address": 1, "timestamp": 6781, "sector": 1}
+{"t": 23.0, "kind": "status", "fuel": [13, 13, 13, 13, 15, 15, 15, 15], "start": 0, "mode": 5, "pit": [false, false, false, false, false, false, false, false], "display": 6}
+{"t": 23.198, "kind": "timer", "address": 2, "timestamp": 7852, "sector": 1}
+{"t": 24.0, "kind": "status", "fuel": [13, 13, 13, 13, 15, 15, 15, 15], "start": 0, "mode": 5, "pit": [false, false, false, false, false, false, false, false], "display": 6}
+{"t": 24.755, "kind": "timer", "address": 3, "timestamp": 9409, "sector": 1}
+{"t": 25.0, "kind": "status", "fuel": [13, 13, 13, 13, 15, 15, 15, 15], "start": 0, "mode": 5, "pit": [false, false, false, false, false, false, false, false], "display": 6}
+{"t": 26.0, "kind": "status", "fuel": [12, 12, 12, 12, 15, 15, 15, 15], "start": 0, "mode": 5, "pit": [false, false, false, false, false, false, false, false], "display": 6}
+{"t": 27.0, "kind": "status", "fuel": [12, 12, 12, 12, 15, 15, 15, 15], "start": 0, "mode": 5, "pit": [false, false, false, false, false, false, false, false], "display": 6}
+{"t": 27.138, "kind": "timer", "address": 0, "timestamp": 11791, "sector": 1}
+{"t": 28.0, "kind": "status", "fuel": [12, 12, 12, 12, 15, 15, 15, 15], "start": 0, "mode": 5, "pit": [false, false, false, false, false, false, false, false], "display": 6}
+{"t": 28.629, "kind": "timer", "address": 1, "timestamp": 13283, "sector": 1}
+{"t": 29.0, "kind": "status", "fuel": [12, 12, 12, 12, 15, 15, 15, 15], "start": 0, "mode": 5, "pit": [false, false, false, false, false, false, false, false], "display": 6}
+{"t": 30.0, "kind": "status", "fuel": [12, 12, 12, 12, 15, 15, 15, 15], "start": 0, "mode": 5, "pit": [false, false, false, false, false, false, false, false], "display": 6}
+{"t": 30.076, "kind": "timer", "address": 2, "timestamp": 14729, "sector": 1}
+{"t": 31.0, "kind": "status", "fuel": [12, 12, 12, 12, 15, 15, 15, 15], "start": 0, "mode": 5, "pit": [false, false, false, false, false, false, false, false], "display": 6}
+{"t": 32.0, "kind": "status", "fuel": [11, 11, 11, 11, 15, 15, 15, 15], "start": 0, "mode": 5, "pit": [false, false, false, false, false, false, false, false], "display": 6}
+{"t": 32.29, "kind": "timer", "address": 3, "timestamp": 16943, "sector": 1}
+{"t": 33.0, "kind": "status", "fuel": [11, 11, 11, 11, 15, 15, 15, 15], "start": 0, "mode": 5, "pit": [false, false, false, false, false, false, false, false], "display": 6}
+{"t": 33.109, "kind": "timer", "address": 0, "timestamp": 17763, "sector": 1}
+{"t": 34.0, "kind": "status", "fuel": [11, 11, 11, 11, 15, 15, 15, 15], "start": 0, "mode": 5, "pit": [false, false, false, false, false, false, false, false], "display": 6}
+{"t": 34.991, "kind": "timer", "address": 1, "timestamp": 19644, "sector": 1}
+{"t": 35.0, "kind": "status", "fuel": [11, 11, 11, 11, 15, 15, 15, 15], "start": 0, "mode": 5, "pit": [false, false, false, false, false, false, false, false], "display": 6}
+{"t": 36.0, "kind": "status", "fuel": [11, 11, 11, 11, 15, 15, 15, 15], "start": 0, "mode": 5, "pit": [false, false, false, false, false, false, false, false], "display": 6}
+{"t": 37.0, "kind": "status", "fuel": [11, 11, 11, 11, 15, 15, 15, 15], "start": 0, "mode": 5, "pit": [false, false, false, false, false, false, false, false], "display": 6}
+{"t": 37.074, "kind": "timer", "address": 2, "timestamp": 21727, "sector": 1}
+{"t": 38.0, "kind": "status", "fuel": [10, 10, 10, 10, 15, 15, 15, 15], "start": 0, "mode": 5, "pit": [false, false, false, false, false, false, false, false], "display": 6}
+{"t": 39.0, "kind": "status", "fuel": [10, 10, 10, 10, 15, 15, 15, 15], "start": 0, "mode": 5, "pit": [false, false, false, false, false, false, false, false], "display": 6}
+{"t": 39.22, "kind": "timer", "address": 0, "timestamp": 23874, "sector": 1}
+{"t": 39.713, "kind": "timer", "address": 3, "timestamp": 24366, "sector": 1}
+{"t": 40.0, "kind": "status", "fuel": [10, 10, 10, 10, 15, 15, 15, 15], "start": 0, "mode": 5, "pit": [false, false, false, false, false, false, false, false], "display": 6}
+{"t": 41.0, "kind": "status", "fuel": [10, 10, 10, 10, 15, 15, 15, 15], "start": 0, "mode": 5, "pit": [false, false, false, false, false, false, false, false], "display": 6}
+{"t": 41.471, "kind": "timer", "address": 1, "timestamp": 26124, "sector": 1}
+{"t": 42.0, "kind": "status", "fuel": [10, 10, 10, 10, 15, 15, 15, 15], "start": 0, "mode": 5, "pit": [false, false, false, false, false, false, false, false], "display": 6}
+{"t": 43.0, "kind": "status", "fuel": [10, 10, 10, 10, 15, 15, 15, 15], "start": 0, "mode": 5, "pit": [false, false, false, false, false, false, false, false], "display": 6}
+{"t": 43.861, "kind": "timer", "address": 2, "timestamp": 28514, "sector": 1}
+{"t": 44.0, "kind": "status", "fuel": [9, 9, 9, 9, 15, 15, 15, 15], "start": 0, "mode": 5, "pit": [false, false, false, false, false, false, false, false], "display": 6}
+{"t": 45.0, "kind": "status", "fuel": [9, 9, 9, 9, 15, 15, 15, 15], "start": 0, "mode": 5, "pit": [false, false, false, false, false, false, false, false], "display": 6}
+{"t": 46.0, "kind": "status", "fuel": [9, 9, 9, 9, 15, 15, 15, 15], "start": 0, "mode": 5, "pit": [false, false, false, false, false, false, false, false], "display": 6}
+{"t": 47.0, "kind": "status", "fuel": [9, 9, 9, 9, 15, 15, 15, 15], "start": 0, "mode": 5, "pit": [false, false, false, false, false, false, false, false], "display": 6}
+{"t": 47.082, "kind": "timer", "address": 3, "timestamp": 31735, "sector": 1}

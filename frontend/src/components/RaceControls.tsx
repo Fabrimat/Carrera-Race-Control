@@ -18,9 +18,11 @@ export function RaceControls() {
   const defaults = useStore((s) => s.settings?.race)
   const [override, setOverride] = useState<Partial<RaceConfig>>({})
   const [busy, setBusy] = useState(false)
-  const cfg: RaceConfig = { ...race.config, ...defaults, ...override }
-
   const active = race.phase === 'starting' || race.phase === 'running' || race.phase === 'paused'
+  // While a race is live, show the config it actually runs with.
+  const cfg: RaceConfig = active
+    ? race.config
+    : { ...race.config, ...defaults, ...override }
   const racing = race.phase === 'running' || race.phase === 'paused'
 
   const run = async (fn: () => Promise<unknown>) => {
