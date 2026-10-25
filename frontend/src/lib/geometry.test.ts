@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
+  approach,
+  shortestDelta,
   cumulative,
   estimateS,
   nearestS,
@@ -69,6 +71,19 @@ describe('geometry', () => {
     expect(estimateS(pos({}), 2000, null)).toBeCloseTo(0.25) // halfway through 0 → 0.5
     expect(estimateS(pos({}), 99_000, null)).toBeLessThan(0.5)
     expect(estimateS(pos({ expected_ms: null }), 5000, null)).toBe(0)
+  })
+
+  it('slows down asymptotically instead of stopping before the sensor', () => {
+    expect(approach(0.5)).toBe(0.5)
+    expect(approach(1.0)).toBeGreaterThan(0.95)
+    expect(approach(1.0)).toBeLessThan(approach(1.3))
+    expect(approach(50)).toBeLessThan(0.99)
+  })
+
+  it('eases across the start/finish line by the shortest way', () => {
+    expect(shortestDelta(0.95, 0.05)).toBeCloseTo(0.1)
+    expect(shortestDelta(0.05, 0.95)).toBeCloseTo(-0.1)
+    expect(shortestDelta(0.2, 0.4)).toBeCloseTo(0.2)
   })
 
   it('wraps through the start/finish line', () => {

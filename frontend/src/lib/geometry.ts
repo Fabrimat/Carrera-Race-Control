@@ -126,6 +126,23 @@ export function estimateS(pos: TrackPosition, raceNowMs: number, pitS: number | 
   if (pos.in_pit && pitS !== null) return pitS
   const span = (pos.s_to - pos.s_from + 1) % 1 || 1 // stretch length, wrapping the line
   if (pos.expected_ms === null || pos.expected_ms <= 0) return pos.s_from
-  const progress = Math.min(0.97, Math.max(0, (raceNowMs - pos.anchor_race_ms) / pos.expected_ms))
+  const progress = approach(Math.max(0, (raceNowMs - pos.anchor_race_ms) / pos.expected_ms))
   return (pos.s_from + span * progress) % 1
+}
+
+/**
+ * Linear up to 0.9 of the expected time, then an asymptotic approach toward 0.99: the dot
+ * keeps creeping forward when the car is a little late instead of stopping dead before
+ * the sensor, yet it never reaches the sensor before the Control Unit reports it.
+ */
+export function approach(p: number): number {
+  const KNEE = 0.9
+  const LIMIT = 0.99
+  if (p <= KNEE) return p
+  return KNEE + (LIMIT - KNEE) * (1 - Math.exp(-(p - KNEE) / (LIMIT - KNEE)))
+}
+
+/** Signed shortest step from a to b on the lap circle, in -0.5..0.5 (eases across the line). */
+export function shortestDelta(a: number, b: number): number {
+  return ((((b - a) % 1) + 1.5) % 1) - 0.5
 }
