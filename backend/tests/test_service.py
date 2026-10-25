@@ -13,7 +13,15 @@ import pytest
 from app.api.ws import WsHub
 from app.commentary.llm import TemplateWriter
 from app.config import AppConfig
-from app.race.models import RaceConfig, RaceMode, RacePhase, Settings
+from app.race.models import (
+    CarConfig,
+    RaceConfig,
+    RaceMode,
+    RacePhase,
+    Settings,
+    TrackRecord,
+    TrackRecordInfo,
+)
 from app.race.store import RaceStore
 from app.service import ControllerError, RaceController, ScaledClock
 from app.track.base import (
@@ -417,6 +425,7 @@ async def test_simulator_laps_race_finishes_and_is_stored(tmp_path: Path) -> Non
         hub=RecordingHub(),
         tts=FakeTTS(available=False),
         writer=TemplateWriter(),
+        second_press_s=0.05,
     )
 
     async def body() -> None:
@@ -443,6 +452,7 @@ async def test_state_broadcast_is_throttled(tmp_path: Path) -> None:
         hub=RecordingHub(),
         tts=FakeTTS(available=False),
         writer=TemplateWriter(),
+        second_press_s=0.05,
     )
 
     async def body() -> None:
@@ -517,6 +527,7 @@ async def test_absent_simulated_cars_get_no_fuel_or_low_fuel(tmp_path: Path) -> 
         hub=RecordingHub(),
         tts=FakeTTS(available=False),
         writer=TemplateWriter(),
+        second_press_s=0.05,
     )
 
     async def body() -> None:
@@ -647,3 +658,302 @@ async def test_controller_errors_carry_codes(tmp_path: Path) -> None:
     with pytest.raises(ControllerError) as err:
         await ctl.connect("serial", "COM1")
     assert err.value.code == "timeout"  # the track's own code is passed through
+
+
+# --------------------------------------------------------------------------- track records
+
+
+def _lap_script(*lap_ms: int, start: int = 1000) -> list[Any]:
+    script: list[Any] = [status(s) for s in (1, 2, 3, 4, 5, 6, 7, 0)]
+    t = start
+    script.append(Timer(0, t))
+    for ms in lap_ms:
+        t += ms
+        script.append(Timer(0, t))
+    return script
+
+
+def _record_events(ctl: RaceController) -> list[Any]:
+    return [e for e in hub(ctl).of("event") if e.type == "track_record"]
+
+
+async def test_first_valid_lap_sets_the_record_and_it_persists(tmp_path: Path) -> None:
+    store = RaceStore(":memory:")
+    ctl = make_controller(tmp_path, FakeTrack(_lap_script(6000, 6500, 5500)), store=store)
+
+    async def body() -> None:
+        await ctl.connect("ble", "AA:BB", persist=False)
+        await wait_for(lambda: len(ctl.engine.laps) == 3)
+        stored = store.get_record("default")
+        assert stored is not None and stored.lap_ms == 5500
+        assert stored.race_id == ctl.engine.race_id
+        assert stored.address == 0
+        assert ctl.race_state().track_record == stored
+        assert ctl.snapshot().race.track_record == stored
+
+    await running(ctl, body)
+    events = _record_events(ctl)
+    assert [(e.lap_ms, e.previous_ms) for e in events] == [(6000, None), (5500, 6000)]
+    assert events[1].previous_holder
+
+
+async def test_record_lap_orders_events_and_speaks_only_the_record(tmp_path: Path) -> None:
+    ctl = make_controller(tmp_path, FakeTrack(_lap_script(6000, 5500)))
+
+    async def body() -> None:
+        await ctl.connect("ble", "AA:BB", persist=False)
+        await wait_for(lambda: len(ctl.engine.laps) == 2)
+        types = [e.type for e in hub(ctl).of("event")]
+        assert types.index("best_lap") < len(types) - 1 - types[::-1].index("track_record")
+        assert types.index("lap_completed") < types.index("best_lap")
+        queued = [q.candidate.template_key for q in ctl.director._queue]
+        assert "best_lap_overall" not in queued and "best_lap_personal" not in queued
+        await wait_for(
+            lambda: any(line.event_type == "track_record" for line in hub(ctl).of("commentary"))
+        )
+
+    await running(ctl, body)
+    assert not any(line.event_type == "best_lap" for line in hub(ctl).of("commentary"))
+
+
+async def test_slower_or_equal_lap_is_not_a_record(tmp_path: Path) -> None:
+    store = RaceStore(":memory:")
+    store.set_record(TrackRecordInfo(layout="default", lap_ms=6000, address=1, holder_name="Old"))
+    ctl = make_controller(tmp_path, FakeTrack(_lap_script(6000, 7000)), store=store)
+
+    async def body() -> None:
+        await ctl.connect("ble", "AA:BB", persist=False)
+        await wait_for(lambda: len(ctl.engine.laps) == 2)
+        assert store.get_record("default").holder_name == "Old"
+        assert ctl.race_state().track_record.holder_name == "Old"
+
+    await running(ctl, body)
+    assert _record_events(ctl) == []
+
+
+async def test_beating_a_record_reports_previous_and_uses_nickname(tmp_path: Path) -> None:
+    store = RaceStore(":memory:")
+    store.set_record(TrackRecordInfo(layout="default", lap_ms=7000, address=1, holder_name="Old"))
+    store.save_settings(
+        Settings(cars=[CarConfig(address=0, name="Rossa", color="#e53935", nickname="Rocky")])
+    )
+    ctl = make_controller(tmp_path, FakeTrack(_lap_script(6000)), store=store)
+
+    async def body() -> None:
+        await ctl.connect("ble", "AA:BB", persist=False)
+        await wait_for(lambda: len(ctl.engine.laps) == 1)
+        assert store.get_record("default").holder_name == "Rocky"
+        await wait_for(
+            lambda: any(line.event_type == "track_record" for line in hub(ctl).of("commentary"))
+        )
+
+    await running(ctl, body)
+    (event,) = _record_events(ctl)
+    assert (event.previous_ms, event.previous_holder, event.lap_ms) == (7000, "Old", 6000)
+    lines = hub(ctl).of("commentary")
+    assert any(line.event_type == "track_record" for line in lines)
+    assert not any(line.event_type == "best_lap" for line in lines)
+
+
+async def test_invalid_laps_never_count(tmp_path: Path) -> None:
+    store = RaceStore(":memory:")
+    ctl = make_controller(tmp_path, FakeTrack(_lap_script(130_000)), store=store)
+
+    async def body() -> None:
+        await ctl.connect("ble", "AA:BB", persist=False)
+        await wait_for(lambda: len(ctl.engine.laps) == 1)
+        assert ctl.engine.laps[0].valid is False
+        assert store.list_records() == []
+
+    await running(ctl, body)
+    assert _record_events(ctl) == []
+
+
+async def test_no_record_without_a_stored_race(tmp_path: Path) -> None:
+    ctl = make_controller(tmp_path, FakeTrack(_lap_script(6000)))
+    original = ctl._new_race_in_store
+
+    def no_race(config: RaceConfig) -> None:
+        original(config)
+        ctl.engine.race_id = None
+
+    ctl._new_race_in_store = no_race  # type: ignore[method-assign]
+
+    async def body() -> None:
+        await ctl.connect("ble", "AA:BB", persist=False)
+        await wait_for(lambda: len(ctl.engine.laps) == 1)
+        assert ctl.store.list_records() == []
+
+    await running(ctl, body)
+    assert _record_events(ctl) == []
+
+
+def test_changing_layout_switches_the_record(tmp_path: Path) -> None:
+    store = RaceStore(":memory:")
+    store.set_record(TrackRecordInfo(layout="loop", lap_ms=4000, address=0, holder_name="L"))
+    ctl = make_controller(tmp_path, store=store)
+    assert ctl.race_state().track_record is None
+    settings = ctl.settings.model_copy(deep=True)
+    settings.track.layout = "loop"
+    ctl.update_settings(settings)
+    assert ctl.race_state().track_record.lap_ms == 4000
+    settings = settings.model_copy(deep=True)
+    settings.track.layout = "other"
+    ctl.update_settings(settings)
+    assert ctl.race_state().track_record is None
+
+
+async def test_connect_keeps_the_layout(tmp_path: Path) -> None:
+    ctl = make_controller(tmp_path, FakeTrack())
+    settings = ctl.settings.model_copy(deep=True)
+    settings.track.layout = "loop"
+    ctl.update_settings(settings)
+
+    async def body() -> None:
+        await ctl.connect("simulator", None)
+        assert ctl.settings.track.layout == "loop"
+        assert ctl.store.load_settings().track.layout == "loop"
+
+    await running(ctl, body)
+
+
+def test_first_record_is_announced_once_per_race(tmp_path: Path) -> None:
+    ctl = make_controller(tmp_path)
+    ctl.engine.race_id = 7
+    first = TrackRecord(race_time_ms=1, address=0, lap_ms=5000, layout="x")
+    assert ctl._announce_record(first) is True
+    assert ctl._announce_record(first) is False
+    ctl.engine.race_id = 8
+    assert ctl._announce_record(first) is True
+    beaten = first.model_copy(update={"previous_ms": 6000})
+    assert ctl._announce_record(beaten) is True
+
+
+def test_delete_record_clears_the_current_layout(tmp_path: Path) -> None:
+    store = RaceStore(":memory:")
+    store.set_record(TrackRecordInfo(layout="default", lap_ms=4000, address=0, holder_name="L"))
+    ctl = make_controller(tmp_path, store=store)
+    assert ctl.track_record is not None
+    assert ctl.delete_record("nope") is False
+    assert ctl.track_record is not None
+    assert ctl.delete_record("default") is True
+    assert ctl.track_record is None and store.get_record("default") is None
+
+
+async def test_simulator_laps_never_become_a_record(tmp_path: Path) -> None:
+    store = RaceStore(":memory:")
+    ctl = make_controller(tmp_path, FakeTrack(_lap_script(6000, 5500)), store=store)
+
+    async def body() -> None:
+        await ctl.connect("simulator", None, persist=False)
+        await wait_for(lambda: len(ctl.engine.laps) == 2)
+        assert store.list_records() == []
+        assert ctl.race_state().track_record is None
+
+    await running(ctl, body)
+    assert _record_events(ctl) == []
+
+
+# --------------------------------------------------------------------------- second START press
+
+
+class ArmingTrack(FakeTrack):
+    """Behaves like a real CU: the first START arms (light 1), the second runs the countdown."""
+
+    def __init__(self, armed_already: bool = False) -> None:
+        super().__init__()
+        self.idle_status = status(1 if armed_already else 0)
+        self.armed = armed_already
+
+    async def start(self) -> None:
+        await super().start()
+        if not self.armed:
+            self.armed = True
+            self.idle_status = status(1)
+            return
+        for light in (2, 3, 4, 5, 6, 7, 0):
+            self.items.put_nowait(status(light))
+        self.idle_status = status(0)
+
+
+async def test_armed_cu_gets_a_second_press_and_runs(tmp_path: Path) -> None:
+    track = ArmingTrack()
+    ctl = make_controller(tmp_path, track, start_fallback_s=10, second_press_s=0.05)
+
+    async def body() -> None:
+        await ctl.connect("simulator", None, persist=False)
+        await ctl.start_race()
+        await wait_for(lambda: ctl.engine.phase is RacePhase.RUNNING)
+        assert track.starts == 2
+
+    await running(ctl, body)
+
+
+async def test_already_armed_cu_is_not_pressed_twice(tmp_path: Path) -> None:
+    track = ArmingTrack(armed_already=True)
+    ctl = make_controller(tmp_path, track, start_fallback_s=10, second_press_s=0.2)
+
+    async def body() -> None:
+        await ctl.connect("simulator", None, persist=False)
+        await asyncio.sleep(0.05)  # the armed status was polled
+        await ctl.start_race()  # our single press starts the countdown
+        await wait_for(lambda: ctl.engine.phase is RacePhase.RUNNING)
+        await asyncio.sleep(0.4)
+        assert track.starts == 1
+
+    await running(ctl, body)
+
+
+async def test_counting_cu_gets_no_second_press(tmp_path: Path) -> None:
+    track = FakeTrack()
+    track.idle_status = status(3)  # the first press already began the countdown
+    ctl = make_controller(tmp_path, track, start_fallback_s=10, second_press_s=0.05)
+
+    async def body() -> None:
+        await ctl.connect("simulator", None, persist=False)
+        await ctl.start_race()
+        await wait_for(lambda: ctl._sequence_seen)
+        await asyncio.sleep(0.2)
+        assert track.starts == 1
+
+    await running(ctl, body)
+
+
+async def test_stop_during_the_wait_presses_nothing_and_cleans_up(tmp_path: Path) -> None:
+    track = ArmingTrack()
+    ctl = make_controller(tmp_path, track, start_fallback_s=10, second_press_s=0.2)
+
+    async def body() -> None:
+        await ctl.connect("simulator", None, persist=False)
+        await ctl.start_race()
+        await wait_for(lambda: ctl._last_status is not None and ctl._last_status.start == 1)
+        watchdog = ctl._watchdog
+        assert watchdog is not None and not watchdog.done()
+        await ctl.stop_race()
+        assert watchdog.done() and ctl._watchdog is None
+        await asyncio.sleep(0.4)
+        assert track.starts == 1
+
+    await running(ctl, body)
+
+
+async def test_stop_while_cu_stays_armed_does_not_restart(tmp_path: Path) -> None:
+    store = RaceStore(":memory:")
+    track = ArmingTrack()
+    ctl = make_controller(tmp_path, track, store=store, start_fallback_s=10, second_press_s=0.05)
+
+    async def body() -> None:
+        await ctl.connect("simulator", None, persist=False)
+        await ctl.start_race()
+        await wait_for(lambda: ctl._last_status is not None and ctl._last_status.start == 1)
+        race_id = ctl.engine.race_id
+        await ctl.stop_race()
+        assert ctl.engine.phase is RacePhase.FINISHED
+        await asyncio.sleep(0.4)  # the armed CU keeps reporting light 1
+        assert ctl.engine.phase is RacePhase.FINISHED
+        assert ctl.engine.race_id == race_id
+        assert len(store.list_races()) == 1
+        assert track.starts == 1  # the second-press watchdog was cancelled with the stop
+        assert [e.type for e in hub(ctl).of("event")].count("race_started") == 0
+
+    await running(ctl, body)

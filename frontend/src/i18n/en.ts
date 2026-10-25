@@ -12,6 +12,7 @@ export const en = {
 
   'common.dismiss': 'Dismiss',
   'common.loading': 'Loading…',
+  'common.cancel': 'Cancel',
 
   'error.offline': 'Cannot reach the backend. Is it running?',
   'error.unknown': 'Something went wrong.',
@@ -31,6 +32,7 @@ export const en = {
   'error.audio_not_found': 'Audio not available for this line.',
   'error.forbidden_origin': 'Request refused: it did not come from this app.',
   'error.invalid_request': 'Invalid request.',
+  'error.record_not_found': 'No record found for this layout.',
 
   'connError.busy':
     'The Control Unit is busy. Close the Carrera phone app: the unit accepts only one Bluetooth connection at a time.',
@@ -100,6 +102,11 @@ export const en = {
   'leaderboard.leader': 'Leader',
   'leaderboard.pit': 'PIT',
   'leaderboard.finished': 'Finished',
+  'leaderboard.record': 'REC',
+  'record.title': 'Track record',
+  'record.layout': 'Layout: {layout}',
+  'record.none': 'No record yet for this layout.',
+  'record.holder': '{name} on {date}',
   'gap.laps_one': '+{count} lap',
   'gap.laps_other': '+{count} laps',
 
@@ -128,6 +135,7 @@ export const en = {
   'event.race_finished': 'Race finished. Winner: {name}',
   'event.race_finished_no_winner': 'Race finished',
   'event.idle': 'Track idle for {seconds} s',
+  'event.track_record': '{name}: NEW TRACK RECORD on {layout}, {time}',
   'events.title': 'Event log',
   'events.empty': 'No events yet.',
 
@@ -144,6 +152,16 @@ export const en = {
   'history.export_json': 'Export JSON',
   'history.avg': 'Average',
   'history.pit_stops': 'Pit stops',
+  'records.title': 'Track records',
+  'records.empty': 'No track records yet.',
+  'records.layout': 'Layout',
+  'records.holder': 'Holder',
+  'records.time': 'Time',
+  'records.date': 'Set on',
+  'records.reset': 'Reset',
+  'records.confirm': 'Confirm reset',
+  'records.confirm_question': 'Delete the record of {layout}?',
+  'records.deleted': 'Record deleted.',
 
   'settings.title': 'Settings',
   'settings.cars': 'Cars',
@@ -172,6 +190,11 @@ export const en = {
   'settings.save': 'Save',
   'settings.discard': 'Discard changes',
   'settings.saved': 'Settings saved.',
+  'settings.track': 'Track',
+  'settings.track_layout': 'Track layout name',
+  'settings.track_layout_hint': 'Lap records are kept per layout (1 to 40 characters). Change it when you rebuild the track.',
+  'sfx.toggle': 'Effects',
+  'sfx.volume': 'Effects volume',
 
   'language.en': 'English',
   'language.it': 'Italiano',

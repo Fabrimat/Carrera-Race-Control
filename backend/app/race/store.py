@@ -10,13 +10,23 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from app.race.models import CarConfig, Lap, RaceConfig, RaceState, Settings, utcnow
+from app.race.models import (
+    CarConfig,
+    Lap,
+    RaceConfig,
+    RaceState,
+    Settings,
+    TrackRecordInfo,
+    utcnow,
+)
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
+# Version 1 baseline (also what a fresh database starts from before migrating).
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_version (
     version INTEGER NOT NULL
@@ -50,6 +60,22 @@ CREATE TABLE IF NOT EXISTS counters (
     value INTEGER NOT NULL
 );
 """
+
+# Upgrade steps: target version -> statements (idempotent), applied in order on open.
+_MIGRATIONS: dict[int, tuple[str, ...]] = {
+    2: (
+        """
+        CREATE TABLE IF NOT EXISTS track_records (
+            layout TEXT PRIMARY KEY,
+            lap_ms INTEGER NOT NULL,
+            address INTEGER NOT NULL,
+            holder_name TEXT NOT NULL,
+            race_id INTEGER,
+            set_at TEXT NOT NULL
+        )
+        """,
+    ),
+}
 
 # One row per race with derived lap count and best valid lap. Used by list and detail.
 _SUMMARY_SQL = """
@@ -88,14 +114,18 @@ class RaceStore:
             self._conn.executescript(_SCHEMA)
             row = self._conn.execute("SELECT version FROM schema_version").fetchone()
             if row is None:
-                self._conn.execute(
-                    "INSERT INTO schema_version (version) VALUES (?)", (SCHEMA_VERSION,)
-                )
-            elif int(row["version"]) > SCHEMA_VERSION:
+                self._conn.execute("INSERT INTO schema_version (version) VALUES (1)")
+                version = 1
+            else:
+                version = int(row["version"])
+            if version > SCHEMA_VERSION:
                 raise RuntimeError(
-                    f"Database schema version {row['version']} is newer than supported "
-                    f"({SCHEMA_VERSION})"
+                    f"Database schema version {version} is newer than supported ({SCHEMA_VERSION})"
                 )
+            for target in range(version + 1, SCHEMA_VERSION + 1):
+                for statement in _MIGRATIONS[target]:
+                    self._conn.execute(statement)
+                self._conn.execute("UPDATE schema_version SET version = ?", (target,))
 
     def close(self) -> None:
         """Close the underlying connection. Safe to call more than once."""
@@ -207,6 +237,43 @@ class RaceStore:
                 (settings.model_dump_json(),),
             )
 
+    # ------------------------------------------------------------------ track records
+
+    def get_record(self, layout: str) -> TrackRecordInfo | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM track_records WHERE layout = ?", (layout,)
+            ).fetchone()
+        return _record_from_row(row) if row is not None else None
+
+    def list_records(self) -> list[TrackRecordInfo]:
+        """All records, sorted by layout name."""
+        with self._lock:
+            rows = self._conn.execute("SELECT * FROM track_records ORDER BY layout").fetchall()
+        return [_record_from_row(row) for row in rows]
+
+    def set_record(self, info: TrackRecordInfo) -> None:
+        """Insert or replace the record of ``info.layout``."""
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO track_records "
+                "(layout, lap_ms, address, holder_name, race_id, set_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    info.layout,
+                    info.lap_ms,
+                    info.address,
+                    info.holder_name,
+                    info.race_id,
+                    info.set_at.isoformat(),
+                ),
+            )
+
+    def delete_record(self, layout: str) -> bool:
+        """Remove a layout's record; False when there was none."""
+        with self._lock, self._conn:
+            cursor = self._conn.execute("DELETE FROM track_records WHERE layout = ?", (layout,))
+        return cursor.rowcount > 0
+
     # ------------------------------------------------------------------ counters
 
     def get_counter(self, key: str) -> int:
@@ -236,3 +303,14 @@ def _summary_from_row(row: sqlite3.Row) -> dict[str, Any]:
         "laps": row["laps"],
         "best_lap_ms": row["best_lap_ms"],
     }
+
+
+def _record_from_row(row: sqlite3.Row) -> TrackRecordInfo:
+    return TrackRecordInfo(
+        layout=row["layout"],
+        lap_ms=row["lap_ms"],
+        address=row["address"],
+        holder_name=row["holder_name"],
+        race_id=row["race_id"],
+        set_at=datetime.fromisoformat(row["set_at"]),
+    )

@@ -13,6 +13,7 @@
   --color-go: #30d158;
   --color-amber: #ffb000;
   --color-purple: #c77dff;
+  --color-gold: #ffd54a;
 }
 
 html, body, #root { height: 100%; }
@@ -25,3 +26,10 @@ body {
 }
 .num { font-variant-numeric: tabular-nums; font-family: var(--font-mono); letter-spacing: -0.02em; }
 input, select, button { font: inherit; }
+
+/* One-shot highlight when a new track record is set. */
+@keyframes record-flash {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 213, 74, 0); }
+  30% { box-shadow: 0 0 24px 4px rgba(255, 213, 74, 0.8); }
+}
+.record-flash { animation: record-flash 2.4s ease-out 1; }

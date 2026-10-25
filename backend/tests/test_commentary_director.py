@@ -6,10 +6,13 @@ from types import SimpleNamespace
 from app.commentary.director import MAX_QUEUE
 from app.commentary.llm import AnthropicWriter
 from app.race.models import (
+    BestLap,
     CommentaryPriority,
     CommentarySettings,
     Idle,
     PitEntry,
+    TrackRecord,
+    Verbosity,
 )
 from tests.test_commentary_fakes import (
     FakeTTS,
@@ -496,3 +499,29 @@ async def test_local_playback_survives_natural_end_of_estimate(monkeypatch):
     with contextlib.suppress(asyncio.CancelledError):
         await task
     assert players[1]["cancelled"]
+
+
+async def test_track_record_replaces_best_lap_of_same_lap():
+    director, sink, _ = make_director()
+    await director.submit(BestLap(address=0, lap_ms=5230, lap_number=2, overall=True), state())
+    await director.submit(BestLap(address=1, lap_ms=5900, lap_number=2, overall=False), state())
+    record = TrackRecord(
+        race_time_ms=9, address=0, lap_ms=5230, layout="x", previous_ms=6000, previous_holder="Blu"
+    )
+    await director.submit(record, state())
+    assert sorted(q.candidate.template_key for q in director._queue) == [
+        "best_lap_personal",
+        "track_record",
+    ]
+    line = await director.step()
+    assert line is not None and line.event_type == "track_record"
+
+
+async def test_filtered_track_record_keeps_best_lap():
+    director, _, _ = make_director(CommentarySettings(verbosity=Verbosity.LOW))
+    await director.submit(BestLap(address=0, lap_ms=5230, lap_number=2, overall=True), state())
+    first = TrackRecord(
+        race_time_ms=9, address=0, lap_ms=5230, layout="x"
+    )  # NORMAL: dropped at LOW
+    await director.submit(first, state())
+    assert [q.candidate.template_key for q in director._queue] == ["best_lap_overall"]

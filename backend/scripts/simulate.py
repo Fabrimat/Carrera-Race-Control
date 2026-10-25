@@ -84,7 +84,8 @@ async def run(args: argparse.Namespace) -> int:
     track = SimulatorTrack(num_cars=args.cars, seed=args.seed, time_scale=scale)
     await track.connect()
     engine.prepare(config)
-    await track.start()
+    await track.start()  # the CU needs two presses: arm...
+    await track.start()  # ...then countdown
     deadline = start + args.timeout
     try:
         while engine.state.phase is not RacePhase.FINISHED:

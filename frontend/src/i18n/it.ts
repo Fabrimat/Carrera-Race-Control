@@ -13,6 +13,7 @@ export const it: Messages = {
 
   'common.dismiss': 'Chiudi',
   'common.loading': 'Caricamento…',
+  'common.cancel': 'Annulla',
 
   'error.offline': 'Impossibile raggiungere il backend. È in esecuzione?',
   'error.unknown': 'Qualcosa è andato storto.',
@@ -32,6 +33,7 @@ export const it: Messages = {
   'error.audio_not_found': 'Audio non disponibile per questa frase.',
   'error.forbidden_origin': "Richiesta rifiutata: non proviene da questa app.",
   'error.invalid_request': 'Richiesta non valida.',
+  'error.record_not_found': 'Nessun record trovato per questo tracciato.',
 
   'connError.busy':
     "La Control Unit è occupata. Chiudi l'app Carrera sul telefono: la centralina accetta una sola connessione Bluetooth alla volta.",
@@ -101,6 +103,11 @@ export const it: Messages = {
   'leaderboard.leader': 'Leader',
   'leaderboard.pit': 'BOX',
   'leaderboard.finished': 'Arrivato',
+  'leaderboard.record': 'REC',
+  'record.title': 'Record del tracciato',
+  'record.layout': 'Tracciato: {layout}',
+  'record.none': 'Nessun record per questo tracciato.',
+  'record.holder': '{name}, il {date}',
   'gap.laps_one': '+{count} giro',
   'gap.laps_other': '+{count} giri',
 
@@ -129,6 +136,7 @@ export const it: Messages = {
   'event.race_finished': 'Gara terminata. Vincitore: {name}',
   'event.race_finished_no_winner': 'Gara terminata',
   'event.idle': 'Pista ferma da {seconds} s',
+  'event.track_record': '{name}: NUOVO RECORD DEL TRACCIATO su {layout}, {time}',
   'events.title': 'Registro eventi',
   'events.empty': 'Ancora nessun evento.',
 
@@ -145,6 +153,16 @@ export const it: Messages = {
   'history.export_json': 'Esporta JSON',
   'history.avg': 'Media',
   'history.pit_stops': 'Soste ai box',
+  'records.title': 'Record dei tracciati',
+  'records.empty': 'Nessun record dei tracciati.',
+  'records.layout': 'Tracciato',
+  'records.holder': 'Detentore',
+  'records.time': 'Tempo',
+  'records.date': 'Stabilito il',
+  'records.reset': 'Azzera',
+  'records.confirm': 'Conferma azzeramento',
+  'records.confirm_question': 'Eliminare il record di {layout}?',
+  'records.deleted': 'Record eliminato.',
 
   'settings.title': 'Impostazioni',
   'settings.cars': 'Auto',
@@ -173,6 +191,11 @@ export const it: Messages = {
   'settings.save': 'Salva',
   'settings.discard': 'Annulla modifiche',
   'settings.saved': 'Impostazioni salvate.',
+  'settings.track': 'Pista',
+  'settings.track_layout': 'Nome del tracciato',
+  'settings.track_layout_hint': 'I record sul giro sono registrati per tracciato (da 1 a 40 caratteri). Cambialo quando ricostruisci la pista.',
+  'sfx.toggle': 'Effetti',
+  'sfx.volume': 'Volume effetti',
 
   'language.en': 'English',
   'language.it': 'Italiano',

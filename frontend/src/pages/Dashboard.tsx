@@ -1,12 +1,14 @@
 import { CommentaryFeed } from '../components/CommentaryFeed'
 import { ConnectionBar } from '../components/ConnectionBar'
 import { EventLog } from '../components/EventLog'
-import { LapChart, seriesFromCars } from '../components/LapChart'
+import { LazyLapChart } from '../components/LazyLapChart'
 import { Leaderboard } from '../components/Leaderboard'
 import { RaceClock } from '../components/RaceClock'
+import { TrackRecordPanel } from '../components/TrackRecordPanel'
 import { RaceControls } from '../components/RaceControls'
 import { StartLights } from '../components/StartLights'
 import { useT } from '../i18n/useT'
+import { seriesFromCars } from '../lib/series'
 import { useStore } from '../lib/store'
 
 export function Dashboard() {
@@ -24,18 +26,19 @@ export function Dashboard() {
         </section>
         <RaceControls />
       </div>
+      <TrackRecordPanel />
       {starting && (
         <section className="flex justify-center rounded-lg border border-signal bg-black p-8" data-testid="starting-panel">
           <StartLights light={race.start_light} big />
         </section>
       )}
       <section className="rounded-lg border border-line bg-panel-2/40 p-3" aria-label={t('leaderboard.title')}>
-        <Leaderboard cars={race.cars} bestLap={race.best_lap} fuelMode={race.fuel_mode} />
+        <Leaderboard cars={race.cars} bestLap={race.best_lap} trackRecord={race.track_record} fuelMode={race.fuel_mode} />
       </section>
       <div className="grid gap-4 xl:grid-cols-[2fr_1fr]">
         <section className="rounded-lg border border-line bg-panel p-4">
           <h2 className="mb-2 text-sm font-bold uppercase tracking-widest text-dim">{t('chart.title')}</h2>
-          <LapChart series={seriesFromCars(race.cars, race.config.max_lap_ms)} />
+          <LazyLapChart series={seriesFromCars(race.cars, race.config.max_lap_ms)} />
         </section>
         <div className="flex flex-col gap-4">
           <CommentaryFeed />

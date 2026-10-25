@@ -439,8 +439,10 @@ async def test_worker_crash_is_reported_as_disconnect(monkeypatch):
         raise RuntimeError("bug")
 
     track = make()
-    await track.connect()
+    # Patch before connecting: otherwise the worker may already have converted (and queued)
+    # a Status by the time the patch lands, and poll() would return it instead of crashing.
     monkeypatch.setattr(carrera, "convert", boom)
+    await track.connect()
     with pytest.raises(TrackDisconnected):
         await asyncio.wait_for(track.poll(), 2)
     assert not track.connected

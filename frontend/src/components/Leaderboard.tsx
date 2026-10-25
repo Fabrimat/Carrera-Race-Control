@@ -1,10 +1,11 @@
 import { useLayoutEffect, useRef } from 'react'
 import { useFormat, useT } from '../i18n/useT'
-import type { BestLapRecord, CarState } from '../lib/types'
+import type { BestLapRecord, CarState, TrackRecordInfo } from '../lib/types'
 
 interface Props {
   cars: CarState[]
   bestLap: BestLapRecord | null
+  trackRecord?: TrackRecordInfo | null
   fuelMode: boolean
   large?: boolean
 }
@@ -59,7 +60,7 @@ function FuelBar({ fuel }: { fuel: number }) {
   )
 }
 
-export function Leaderboard({ cars, bestLap, fuelMode, large = false }: Props) {
+export function Leaderboard({ cars, bestLap, trackRecord = null, fuelMode, large = false }: Props) {
   const t = useT()
   const f = useFormat()
   const rows = sortCars(cars)
@@ -88,6 +89,9 @@ export function Leaderboard({ cars, bestLap, fuelMode, large = false }: Props) {
       <div className="flex flex-col gap-2">
         {rows.map((c) => {
           const isBest = bestLap !== null && c.best_lap_ms !== null && c.best_lap_ms === bestLap.lap_ms
+          // The holder's best lap equals the all-time record: gold wins over the purple overall best.
+          const isRecord =
+            trackRecord !== null && c.address === trackRecord.address && c.best_lap_ms === trackRecord.lap_ms
           let gap = '–'
           if (c.position === 1) gap = t('leaderboard.leader')
           else if (c.gap_to_leader_laps > 0) gap = t('gap.laps', { count: c.gap_to_leader_laps })
@@ -117,6 +121,15 @@ export function Leaderboard({ cars, bestLap, fuelMode, large = false }: Props) {
                     {t('leaderboard.pit')}
                   </span>
                 )}
+                {isRecord && (
+                  <span
+                    data-testid="record-badge"
+                    className="rounded bg-gold px-2 py-0.5 text-sm font-bold text-black"
+                    title={t('record.title')}
+                  >
+                    {t('leaderboard.record')}
+                  </span>
+                )}
                 {c.finished && (
                   <span className="rounded bg-go px-2 py-0.5 text-sm font-bold text-black">
                     {t('leaderboard.finished')}
@@ -131,7 +144,8 @@ export function Leaderboard({ cars, bestLap, fuelMode, large = false }: Props) {
                 role="cell"
                 data-testid="best-lap"
                 data-best={isBest ? 'true' : 'false'}
-                className={`num text-right ${isBest ? 'font-bold text-purple' : ''}`}
+                data-record={isRecord ? 'true' : 'false'}
+                className={`num text-right ${isRecord ? 'font-bold text-gold' : isBest ? 'font-bold text-purple' : ''}`}
               >
                 {f.lap(c.best_lap_ms)}
               </span>

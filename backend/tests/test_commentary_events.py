@@ -14,6 +14,7 @@ from app.race.models import (
     PitEntry,
     PitExit,
     RaceFinished,
+    TrackRecord,
     Verbosity,
 )
 from tests.test_commentary_fakes import (
@@ -41,6 +42,7 @@ def test_both_languages_cover_same_keys_with_3_to_5_variants():
 
 def test_placeholders_are_known_fields():
     known = {"name", "lap_time", "lap", "position", "passed", "fuel", "winner", "second"}
+    known |= {"previous_time", "holder"}
     for module in LANGUAGES.values():
         for variants in module.TEMPLATES.values():
             for v in variants:
@@ -138,3 +140,34 @@ def test_final_lap_line_for_leader_in_laps_mode():
 
 def test_invalid_lap_is_silent():
     assert cands(ev_lap().model_copy(update={"valid": False}), Verbosity.HIGH) == []
+
+
+@pytest.mark.parametrize("lang", ["it", "en"])
+def test_track_record_beaten_names_car_time_and_previous(lang):
+    ev = TrackRecord(
+        race_time_ms=1, address=0, lap_ms=5230, layout="x", previous_ms=6100, previous_holder="Blu"
+    )
+    (c,) = cands(ev, lang=lang)
+    assert c.priority == P.HIGH and c.template_key == "track_record"
+    assert "Fulmine" in c.text
+    assert "{" not in c.text
+    assert c.facts["previous_ms"] == 6100 and c.facts["layout"] == "x"
+
+
+@pytest.mark.parametrize("lang", ["it", "en"])
+def test_track_record_without_previous_is_normal_and_clean(lang):
+    ev = TrackRecord(race_time_ms=1, address=1, lap_ms=5230, layout="x")
+    for _ in range(10):
+        (c,) = cands(ev, lang=lang)
+        assert c.priority == P.NORMAL
+        assert "Blu" in c.text and "{" not in c.text and "  " not in c.text
+        assert "previous_ms" not in c.facts
+
+
+def test_track_record_low_verbosity_keeps_beaten_but_not_first():
+    beaten = TrackRecord(
+        race_time_ms=1, address=0, lap_ms=5000, layout="x", previous_ms=6000, previous_holder="Blu"
+    )
+    first = TrackRecord(race_time_ms=1, address=0, lap_ms=5000, layout="x")
+    assert cands(beaten, verbosity=Verbosity.LOW)
+    assert cands(first, verbosity=Verbosity.LOW) == []

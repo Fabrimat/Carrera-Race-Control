@@ -34,6 +34,7 @@ from app.race.models import (
     RaceMode,
     RaceStarted,
     RaceState,
+    TrackRecord,
     Verbosity,
 )
 
@@ -145,6 +146,22 @@ def candidates(
         fields = {"name": name(event.address), "lap_time": speech.say_lap_time(event.lap_ms, lang)}
         facts = {"driver": name(event.address), "lap_ms": event.lap_ms, "overall": event.overall}
         specs.append((key, level, fields, facts, event.address))
+    elif isinstance(event, TrackRecord):
+        fields = {"name": name(event.address), "lap_time": speech.say_lap_time(event.lap_ms, lang)}
+        facts = {
+            "driver": name(event.address),
+            "lap_ms": event.lap_ms,
+            "layout": event.layout,
+        }
+        if event.previous_ms is not None:
+            fields["previous_time"] = speech.say_lap_time(event.previous_ms, lang)
+            facts["previous_ms"] = event.previous_ms
+            if event.previous_holder:
+                fields["holder"] = event.previous_holder
+                facts["previous_holder"] = event.previous_holder
+        # The very first record of a layout is routine; only a beaten record is big news.
+        level = prio.HIGH if event.previous_ms is not None else prio.NORMAL
+        specs.append(("track_record", level, fields, facts, event.address))
     elif isinstance(event, PositionChange):
         if event.new_position < event.old_position:
             fields = {

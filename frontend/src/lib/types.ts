@@ -58,6 +58,15 @@ export interface BestLapRecord {
   lap_number: number
 }
 
+export interface TrackRecordInfo {
+  layout: string
+  lap_ms: number
+  address: number
+  holder_name: string
+  race_id: number | null
+  set_at: string
+}
+
 export interface RaceState {
   race_id: number | null
   phase: RacePhase
@@ -70,6 +79,7 @@ export interface RaceState {
   pit_lane: boolean
   cars: CarState[]
   best_lap: BestLapRecord | null
+  track_record: TrackRecordInfo | null
 }
 
 // ------------------------------------------------------------------ events
@@ -113,6 +123,14 @@ export type RaceEvent =
   | (EventBase & { type: 'low_fuel'; address: number; fuel: number })
   | (EventBase & { type: 'race_finished'; winner: number | null; order: number[] })
   | (EventBase & { type: 'idle'; seconds: number })
+  | (EventBase & {
+      type: 'track_record'
+      address: number
+      lap_ms: number
+      layout: string
+      previous_ms: number | null
+      previous_holder: string | null
+    })
 
 export interface CommentaryLine {
   id: string
@@ -141,6 +159,7 @@ export interface CommentarySettings {
 export interface TrackSettings {
   mode: TrackMode
   address: string | null
+  layout: string
 }
 
 export interface Settings {

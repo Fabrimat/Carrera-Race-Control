@@ -38,6 +38,7 @@ export function SettingsPage() {
 
   if (!loaded) return <p className="p-6 text-dim">{t('common.loading')}</p>
   const s: Settings = draft ?? loaded
+  const layoutOk = s.track.layout.trim().length >= 1 && s.track.layout.length <= 40
   const edit = (patch: Partial<Settings>) => setDraft({ ...s, ...patch })
   const editCom = (patch: Partial<CommentarySettings>) =>
     edit({ commentary: { ...s.commentary, ...patch } })
@@ -98,6 +99,22 @@ export function SettingsPage() {
             </div>
           ))}
         </div>
+      </section>
+
+      <section className="rounded-lg border border-line bg-panel p-4">
+        <h3 className="mb-3 text-sm font-bold uppercase tracking-widest text-dim">{t('settings.track')}</h3>
+        <Field label={t('settings.track_layout')}>
+          <input
+            className={`${input} ${layoutOk ? '' : 'border-signal'}`}
+            value={s.track.layout}
+            minLength={1}
+            maxLength={40}
+            aria-invalid={!layoutOk}
+            data-testid="track-layout"
+            onChange={(e) => edit({ track: { ...s.track, layout: e.target.value } })}
+          />
+        </Field>
+        <p className="mt-2 text-sm text-dim">{t('settings.track_layout_hint')}</p>
       </section>
 
       <section className="rounded-lg border border-line bg-panel p-4">
@@ -183,7 +200,7 @@ export function SettingsPage() {
       <div className="flex gap-3">
         <button
           className="rounded-md bg-go px-6 py-3 text-lg font-bold uppercase text-black disabled:opacity-40"
-          disabled={saving || draft === null}
+          disabled={saving || draft === null || !layoutOk}
           onClick={() => void save()}
         >
           {t('settings.save')}

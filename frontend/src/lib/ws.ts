@@ -1,4 +1,6 @@
 import { audioPlayer } from './audio'
+import { playSfx } from './sfx'
+import { sfxForMessage } from './sfxTriggers'
 import { useStore } from './store'
 import type { WsMessage } from './types'
 
@@ -6,7 +8,10 @@ const BACKOFF_MS = [1000, 2000, 4000, 10000]
 
 /** Route a parsed server message into the store (and the audio player). */
 export function dispatchMessage(msg: WsMessage): void {
+  // Sound effects are decided against the state from before the message was applied.
+  const sounds = sfxForMessage(useStore.getState().race, msg)
   useStore.getState().applyMessage(msg)
+  sounds.forEach((n) => playSfx(n))
   switch (msg.type) {
     case 'snapshot':
       audioPlayer.setMuted(msg.data.muted)

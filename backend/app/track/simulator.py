@@ -66,7 +66,8 @@ class SimulatedCU:
         self.cu_offset = clock_offset_ms % TIMESTAMP_MODULO
         self.cu_zero = 0.0
         self.light = 0
-        self.started = False
+        self.armed = False  # first START press seen (light 1 held)
+        self.started = False  # countdown running or done
         self.paused_at: float | None = None
         self._heap: list[tuple[float, int, str, int]] = []
         self._frozen: list[tuple[float, str, int]] = []  # (remaining ms, kind, car)
@@ -106,13 +107,19 @@ class SimulatedCU:
     # ---- commands
 
     def start(self, t: float) -> None:
+        """Like the real CU: the first press arms (light 1 held), the second starts the
+        countdown (lights 2..6, then 7 = go); presses while counting are ignored."""
         if self.started:
             return
+        if not self.armed:
+            self.armed = True
+            self.light = 1
+            return
         self.started = True
-        for step in range(6):  # lights 1 (armed) .. 6
-            self._push(t + step * LIGHT_STEP_MS, "light", step + 1)
-        self._push(t + 6 * LIGHT_STEP_MS, "light", 7)  # go
-        self._push(t + 7 * LIGHT_STEP_MS, "light", 0)
+        for step in range(5):  # lights 2..6
+            self._push(t + step * LIGHT_STEP_MS, "light", step + 2)
+        self._push(t + 5 * LIGHT_STEP_MS, "light", 7)  # go
+        self._push(t + 6 * LIGHT_STEP_MS, "light", 0)
 
     def pause(self, t: float) -> None:
         if self.paused_at is not None:
@@ -146,6 +153,7 @@ class SimulatedCU:
         self.cu_offset = 0
         self.cu_zero = t
         self.light = 0
+        self.armed = False
         self.started = False
         self.paused_at = None
         self._heap.clear()
@@ -313,7 +321,8 @@ class SimulatorTrack:
         Do not mix with :meth:`poll` on the same instance.
         """
         if auto_start:
-            self._core.start(0.0)
+            self._core.start(0.0)  # arm
+            self._core.start(0.0)  # countdown
         t = 0.0
         while True:
             yield from self._core.advance(t)

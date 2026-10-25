@@ -3,6 +3,7 @@ import { useT } from '../i18n/useT'
 import { api } from '../lib/api'
 import { audioPlayer, saveVolume, loadVolume } from '../lib/audio'
 import { guarded } from '../lib/errors'
+import { getSfxPrefs, setSfxEnabled, setSfxVolume } from '../lib/sfx'
 import { useStore } from '../lib/store'
 import type { CommentaryLine } from '../lib/types'
 
@@ -17,6 +18,7 @@ export function CommentaryFeed() {
   const lines = useStore((s) => s.commentary)
   const muted = useStore((s) => s.muted)
   const [volume, setVolume] = useState(loadVolume)
+  const [sfx, setSfx] = useState(getSfxPrefs)
 
   const toggleMute = async () => {
     void audioPlayer.unlock()
@@ -30,6 +32,16 @@ export function CommentaryFeed() {
     setVolume(v)
     audioPlayer.setVolume(v)
     saveVolume(v)
+  }
+
+  const toggleSfx = () => {
+    void audioPlayer.unlock()
+    setSfxEnabled(!sfx.enabled)
+    setSfx(getSfxPrefs())
+  }
+  const onSfxVolume = (v: number) => {
+    setSfxVolume(v)
+    setSfx(getSfxPrefs())
   }
 
   return (
@@ -52,6 +64,26 @@ export function CommentaryFeed() {
             step={0.05}
             value={volume}
             onChange={(e) => onVolume(Number(e.target.value))}
+          />
+        </label>
+        <button
+          className={`rounded-md px-3 py-1 text-sm font-bold uppercase ${sfx.enabled ? 'bg-go text-black' : 'bg-panel-2'}`}
+          onClick={toggleSfx}
+          aria-pressed={sfx.enabled}
+          data-testid="sfx-toggle"
+        >
+          {t('sfx.toggle')}
+        </button>
+        <label className="flex items-center gap-2 text-sm text-dim">
+          {t('sfx.volume')}
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.05}
+            value={sfx.volume}
+            disabled={!sfx.enabled}
+            onChange={(e) => onSfxVolume(Number(e.target.value))}
           />
         </label>
       </div>

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import itertools
+import random
 import time
 
 import pytest
@@ -26,7 +27,7 @@ from app.track.base import (
     TrackInterface,
     ts_diff,
 )
-from app.track.simulator import SimulatorTrack
+from app.track.simulator import SimulatedCU, SimulatorTrack
 
 
 def take(track: SimulatorTrack, virtual_ms: float):
@@ -54,11 +55,25 @@ def test_start_sequence_then_cars_run():
     msgs = take(track, 40_000)
     lights = [m.start for _, m in msgs if isinstance(m, Status)]
     dedup = [k for k, _ in itertools.groupby(lights)]
-    assert dedup == [1, 2, 3, 4, 5, 6, 7, 0]
+    # generate() arms and presses again at t=0, so light 1 is not seen as a separate status
+    assert dedup == [2, 3, 4, 5, 6, 7, 0]
     first_timer = next(t for t, m in msgs if isinstance(m, Timer))
     go_time = next(t for t, m in msgs if isinstance(m, Status) and m.start == 7)
     assert go_time <= first_timer < go_time + 3000  # shortly after go
     assert {m.address for _, m in msgs if isinstance(m, Timer)} == {0, 1, 2}
+
+
+def test_cu_needs_two_start_presses_and_ignores_presses_while_counting():
+    cu = SimulatedCU(2, random.Random(1), 0, True, True, 0)
+    assert cu.status().start == 0
+    cu.start(0.0)  # first press: armed, light held
+    assert cu.status().start == 1 and not cu.started
+    assert cu.advance(10_000) == []
+    cu.start(10_000.0)  # second press: countdown 2..6, 7, 0
+    lights = [m.start for _, m in cu.advance(20_000) if isinstance(m, Status)]
+    assert lights == [2, 3, 4, 5, 6, 7, 0]
+    cu.start(20_000.0)  # ignored
+    assert cu.light == 0
 
 
 def test_cars_stand_still_without_start():
@@ -167,7 +182,8 @@ def test_engine_sees_pit_and_low_fuel_from_simulator():
 async def test_pace_car_pauses_cars():
     track = SimulatorTrack(num_cars=2, seed=1, time_scale=200, double_trigger_rate=0, fuel=False)
     await track.connect()
-    await track.start()
+    await track.start()  # arm
+    await track.start()  # countdown
     stamps: list[tuple[float, int]] = []
 
     async def collect(seconds: float):
@@ -218,7 +234,8 @@ async def test_three_lap_race_through_engine_is_fast(seed):
     )
     await track.connect()
     engine.prepare(RaceConfig(mode=RaceMode.LAPS, target_laps=3))
-    await track.start()
+    await track.start()  # arm
+    await track.start()  # countdown
     events = []
     while engine.state.phase is not RacePhase.FINISHED:
         events.extend(engine.handle(await track.poll()))

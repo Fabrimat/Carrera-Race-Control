@@ -36,6 +36,7 @@ from app.race.models import (
     CommentarySettings,
     RaceEvent,
     RaceState,
+    TrackRecord,
 )
 
 log = logging.getLogger(__name__)
@@ -58,6 +59,17 @@ IDLE_POLL_S = 0.1
 
 LineCallback = Callable[[CommentaryLine], Awaitable[None]]
 StopCallback = Callable[[str], Awaitable[None]]
+
+
+_BEST_LAP_KEYS = frozenset({"best_lap_overall", "best_lap_personal"})
+
+
+def _superseded_by(cand: Candidate, record: TrackRecord) -> bool:
+    return (
+        cand.template_key in _BEST_LAP_KEYS
+        and cand.address == record.address
+        and cand.facts.get("lap_ms") == record.lap_ms
+    )
 
 
 class _AudioBuffer:
@@ -177,6 +189,10 @@ class CommentaryDirector:
         except Exception:
             log.exception("commentary candidates failed for %s", getattr(event, "type", event))
             return
+        if isinstance(event, TrackRecord) and cands:
+            # A lap that is a track record is announced once: drop the best-lap lines the same
+            # crossing queued just before (the controller emits TrackRecord after BestLap).
+            self._queue = [q for q in self._queue if not _superseded_by(q.candidate, event)]
         now = self._clock()
         for cand in cands:
             self._seq += 1

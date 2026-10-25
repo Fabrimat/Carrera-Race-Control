@@ -30,6 +30,14 @@ FastAPI's list of problems); `code` is stable and translated by the UI (see "Err
 | GET | `/api/races/{id}/export?format=csv\|json` | – | file download |
 | GET | `/api/commentary/{line_id}/audio` | – | `audio/mpeg` stream (404 if none) |
 | POST | `/api/commentary/mute` | `{"muted": bool}` | `{"muted": bool}` |
+| GET | `/api/records` | – | `{"records": TrackRecordInfo[]}` one per layout, by layout name |
+| DELETE | `/api/records/{layout}` | – | `{"records": TrackRecordInfo[]}` after removing that layout's record (404 `record_not_found` if none) |
+
+Track records: the all-time best *valid* lap per `settings.track.layout`. The
+controller compares every valid `LapCompleted` with the stored record; when it
+is beaten it saves the new record and emits a `track_record` event (after the
+`lap_completed` / `best_lap` events of the same crossing). `RaceState.track_record`
+always carries the record of the current layout.
 
 Shapes not defined in models.py:
 
@@ -75,6 +83,7 @@ RaceDetail = Omit<RaceSummary, "laps"> & {   // `laps` is the lap list here, not
 | `pace_car_failed` | 503 | the CU did not accept the pace car command |
 | `settings_invalid` | 422 | `PUT /api/settings`: more than 8 cars, duplicate addresses, name > 40 chars, color not `#RRGGBB` |
 | `race_not_found` | 404 | unknown race id (detail / export) |
+| `record_not_found` | 404 | `DELETE /api/records/{layout}` for a layout without a record |
 | `audio_not_found` | 404 | no audio for that commentary line |
 | `invalid_request` | 422 | the request body / query does not match the schema |
 | `forbidden_origin` | 403 | cross-origin state-changing request (see "Security") |

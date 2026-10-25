@@ -42,6 +42,8 @@ export function describeEvent(
       return e.winner === null
         ? t('event.race_finished_no_winner')
         : t('event.race_finished', { name: name(e.winner) })
+    case 'track_record':
+      return t('event.track_record', { name: name(e.address), layout: e.layout, time: lap(e.lap_ms) })
     case 'idle':
       return t('event.idle', { seconds: e.seconds })
   }

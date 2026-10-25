@@ -37,6 +37,13 @@ TEMPLATES: dict[str, list[str]] = {
         "A best lap for {name}, {lap_time}.",
         "Personal best for {name}: {lap_time}.",
     ],
+    "track_record": [
+        "New track record! {name} laps in {lap_time}, beating {holder}'s {previous_time}!",
+        "Track record broken! {name} stops the clock at {lap_time}, {holder} had {previous_time}.",
+        "History on this track: {name} sets a new track record, {lap_time}!",
+        "A new track record for {name}: {lap_time}! Nobody has ever been faster here.",
+        "{name} writes a new page in the record book with {lap_time}!",
+    ],
     "position_change": [
         "{name} passes {passed} and moves up to {position}!",
         "Overtake! {name} gets past {passed}!",
@@ -73,4 +80,4 @@ TEMPLATES: dict[str, list[str]] = {
     ],
 }
 
-STATIC_FIELDS = frozenset({"name", "winner", "second", "passed"})
+STATIC_FIELDS = frozenset({"name", "winner", "second", "passed", "holder"})

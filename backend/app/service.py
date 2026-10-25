@@ -57,7 +57,10 @@ from app.race.models import (
     RaceStarted,
     RaceState,
     Settings,
+    TrackRecord,
+    TrackRecordInfo,
     TrackSettings,
+    utcnow,
 )
 from app.race.store import RaceStore
 from app.track.base import (
@@ -75,6 +78,8 @@ DEFAULT_BACKOFF: tuple[float, ...] = (1.0, 2.0, 4.0, 8.0, 10.0)
 STATE_INTERVAL_S = 0.1
 TICK_INTERVAL_S = 0.1
 START_FALLBACK_S = 5.0
+# A real CU needs two START presses (arm, then countdown): press again if still armed.
+START_SECOND_PRESS_S = 2.5
 CLOSE_TIMEOUT_S = 5.0
 COMMENTARY_HISTORY = 50
 SEEDED_COUNTER = "settings:seeded"
@@ -111,6 +116,7 @@ ErrorCode = Literal[
     "connect_cancelled",
     "settings_invalid",
     "race_not_found",
+    "record_not_found",
     "audio_not_found",
     "forbidden_origin",
     "invalid_request",
@@ -192,6 +198,7 @@ class RaceController:
         writer: LineWriter | None = None,
         backoff: Sequence[float] = DEFAULT_BACKOFF,
         start_fallback_s: float = START_FALLBACK_S,
+        second_press_s: float = START_SECOND_PRESS_S,
         state_interval: float = STATE_INTERVAL_S,
         tick_interval: float = TICK_INTERVAL_S,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
@@ -202,6 +209,7 @@ class RaceController:
         self._track_factory = track_factory or self._default_track
         self._backoff = tuple(backoff) or DEFAULT_BACKOFF
         self._start_fallback_s = start_fallback_s
+        self._second_press_s = second_press_s
         self._state_interval = state_interval
         self._tick_interval = tick_interval
         self._sleep = sleep
@@ -211,6 +219,9 @@ class RaceController:
             mode=self.settings.track.mode, address=self.settings.track.address
         )
         self.muted = False
+        self._record_layout = self.settings.track.layout
+        self.track_record: TrackRecordInfo | None = self._load_record(self._record_layout)
+        self._first_record_race: int | None = None  # race whose first-ever record was announced
         self.commentary: deque[CommentaryLine] = deque(maxlen=COMMENTARY_HISTORY)
 
         self.engine_clock = ScaledClock()
@@ -353,10 +364,16 @@ class RaceController:
     def snapshot(self) -> Snapshot:
         return Snapshot(
             connection=self.connection.model_copy(),
-            race=self.engine.state,
+            race=self.race_state(),
             commentary=list(self.commentary),
             muted=self.muted,
         )
+
+    def race_state(self) -> RaceState:
+        """Engine state plus the track record of the current layout."""
+        state = self.engine.state
+        state.track_record = self.track_record.model_copy() if self.track_record else None
+        return state
 
     def snapshot_message(self) -> str:
         return encode("snapshot", self.snapshot())
@@ -374,7 +391,7 @@ class RaceController:
             self._dirty.clear()
             if self.hub.client_count:
                 try:
-                    self.hub.broadcast("state", self.engine.state)
+                    self.hub.broadcast("state", self.race_state())
                 except Exception:
                     log.exception("state broadcast failed")
             await asyncio.sleep(self._state_interval)
@@ -410,14 +427,83 @@ class RaceController:
     # ------------------------------------------------------------------ events
 
     async def _process_events(self, events: list[RaceEvent]) -> None:
-        state = self.engine.state
+        state = self.race_state()
         for event in events:
             self._persist(event, state)
             if isinstance(event, RaceStarted):
                 self.budget.reset_session()
             self.hub.broadcast("event", event)
             await self.director.submit(event, state)
+        # Records are checked once the whole batch (lap_completed, best_lap, position_change,
+        # ...) went out, so the director can drop the best_lap line of a record lap.
+        for lap_event in [e for e in events if isinstance(e, LapCompleted)]:
+            record_event = self._check_record(lap_event)
+            if record_event is not None:
+                state = self.race_state()
+                self.hub.broadcast("event", record_event)
+                if self._announce_record(record_event):
+                    await self.director.submit(record_event, state)
         self._mark_dirty()
+
+    def _load_record(self, layout: str) -> TrackRecordInfo | None:
+        try:
+            return self.store.get_record(layout)
+        except Exception:
+            log.exception("could not load the track record of %r", layout)
+            return None
+
+    def _holder_name(self, address: int) -> str:
+        car = self.cars_by_address().get(address)
+        return (car.nickname or car.name) if car is not None else f"Car {address + 1}"
+
+    def _check_record(self, event: LapCompleted) -> TrackRecord | None:
+        """Save and report the lap when it beats the layout's record (valid laps only)."""
+        race_id = self.engine.race_id
+        if not event.valid or race_id is None or self.connection.mode == "simulator":
+            return None  # simulated / replayed laps must not become the real record
+        layout = self.settings.track.layout
+        previous = self.track_record
+        if previous is not None and event.lap_ms >= previous.lap_ms:
+            return None
+        info = TrackRecordInfo(
+            layout=layout,
+            lap_ms=event.lap_ms,
+            address=event.address,
+            holder_name=self._holder_name(event.address),
+            race_id=race_id,
+            set_at=utcnow(),
+        )
+        try:
+            self.store.set_record(info)
+        except Exception:
+            log.exception("could not save the track record of %r", layout)
+        self.track_record = info
+        return TrackRecord(
+            race_time_ms=event.race_time_ms,
+            address=event.address,
+            lap_ms=event.lap_ms,
+            layout=layout,
+            previous_ms=previous.lap_ms if previous is not None else None,
+            previous_holder=previous.holder_name if previous is not None else None,
+        )
+
+    def _announce_record(self, event: TrackRecord) -> bool:
+        """A first-ever record on a layout is spoken at most once per race."""
+        if event.previous_ms is not None:
+            return True
+        race_id = self.engine.race_id
+        if race_id is not None and race_id == self._first_record_race:
+            return False
+        self._first_record_race = race_id
+        return True
+
+    def delete_record(self, layout: str) -> bool:
+        """Remove a layout's record; clears the in-memory one when it is the current layout."""
+        removed = self.store.delete_record(layout)
+        if removed and layout == self.settings.track.layout:
+            self.track_record = None
+            self._mark_dirty()
+        return removed
 
     def _persist(self, event: RaceEvent, state: RaceState) -> None:
         race_id = self.engine.race_id
@@ -480,7 +566,7 @@ class RaceController:
             self._new_race_in_store(self.engine.config)
         changed = bool(events) or after is not before
         if isinstance(msg, Status):
-            if after is RacePhase.STARTING and 1 <= msg.start <= 9:
+            if after is RacePhase.STARTING and 2 <= msg.start <= 9:
                 self._sequence_seen = True
             changed = changed or msg != self._last_status
             self._last_status = msg
@@ -570,7 +656,11 @@ class RaceController:
             self._set_connection(status="connected", error=None, error_code=None)
             if persist:
                 self.settings = self.settings.model_copy(
-                    update={"track": TrackSettings(mode=mode, address=address)}
+                    update={
+                        "track": self.settings.track.model_copy(
+                            update={"mode": mode, "address": address}
+                        )
+                    }
                 )
                 self._save_settings()
             return self.connection
@@ -644,8 +734,8 @@ class RaceController:
             raise ControllerError(
                 503, f"Start command failed: {_describe(exc)}", "start_failed"
             ) from exc
-        self._watchdog = asyncio.create_task(self._start_watchdog(), name="start-watchdog")
-        return self.engine.state
+        self._watchdog = asyncio.create_task(self._start_watchdog(track), name="start-watchdog")
+        return self.race_state()
 
     def _abort_start(self) -> None:
         """The CU never got the start command: leave STARTING and close the stray race row."""
@@ -660,8 +750,20 @@ class RaceController:
         self._sequence_seen = False
         self._mark_dirty()
 
-    async def _start_watchdog(self) -> None:
-        await asyncio.sleep(self._start_fallback_s)
+    async def _start_watchdog(self, track: TrackInterface) -> None:
+        # 1) The CU only armed (light 1, lights off): a second START begins the countdown.
+        #    Never pressed once a countdown light (2..9) was seen.
+        press_at = min(self._second_press_s, self._start_fallback_s)
+        await asyncio.sleep(press_at)
+        armed = self._last_status is not None and self._last_status.start == 1
+        if self.engine.phase is RacePhase.STARTING and not self._sequence_seen and armed:
+            log.info("the CU is armed (light 1), pressing START a second time")
+            try:
+                await track.start()
+            except Exception as exc:
+                log.warning("second start press failed: %s", _describe(exc))
+        # 2) Still no countdown: start the race on the host clock.
+        await asyncio.sleep(self._start_fallback_s - press_at)
         if self.engine.phase is RacePhase.STARTING and not self._sequence_seen:
             log.warning(
                 "no start light sequence seen within %.1fs, starting the race now",
@@ -681,7 +783,7 @@ class RaceController:
         events = self.engine.stop()
         if events:
             await self._process_events(events)
-        return self.engine.state
+        return self.race_state()
 
     async def reset_race(self) -> RaceState:
         await self._cancel_watchdog()
@@ -694,7 +796,7 @@ class RaceController:
             except Exception as exc:
                 log.warning("reset command failed: %s", _describe(exc))
         self._mark_dirty()
-        return self.engine.state
+        return self.race_state()
 
     async def toggle_pace_car(self) -> RaceState:
         track = self._require_track()
@@ -709,12 +811,15 @@ class RaceController:
             if events:
                 await self._process_events(events)
         self._mark_dirty()
-        return self.engine.state
+        return self.race_state()
 
     # ------------------------------------------------------------------ settings
 
     def update_settings(self, settings: Settings) -> Settings:
         self.settings = settings
+        if settings.track.layout != self._record_layout:
+            self._record_layout = settings.track.layout
+            self.track_record = self._load_record(self._record_layout)
         self.engine.update_cars(settings.cars)
         if self.engine.phase not in _ACTIVE:
             # Used when a race is started from the CU's own START button.

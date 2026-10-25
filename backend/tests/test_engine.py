@@ -111,7 +111,18 @@ def test_false_start_no_race_started(bad):
     assert engine.state.phase is RacePhase.STARTING
     # A fresh sequence then works
     engine.handle(status(1))
+    engine.handle(status(2))
     assert of_type(engine.handle(status(7)), RaceStarted)
+
+
+def test_armed_then_dropped_back_to_zero_does_not_start():
+    engine, _ = make()
+    engine.prepare(RaceConfig())
+    engine.handle(status(1))  # armed: no countdown yet
+    assert engine.handle(status(0)) == []
+    assert engine.state.phase is RacePhase.STARTING
+    engine.handle(status(7))
+    assert engine.state.phase is RacePhase.STARTING
 
 
 def test_physical_cu_start_auto_prepares_from_idle():
@@ -119,6 +130,7 @@ def test_physical_cu_start_auto_prepares_from_idle():
     assert engine.state.phase is RacePhase.IDLE
     engine.handle(status(1))
     assert engine.state.phase is RacePhase.STARTING
+    engine.handle(status(2))
     events = engine.handle(status(7))
     assert len(of_type(events, RaceStarted)) == 1
     assert engine.state.config.target_laps == 4
@@ -130,6 +142,38 @@ def test_physical_cu_start_auto_prepares_from_finished():
     engine.stop()
     assert engine.state.phase is RacePhase.FINISHED
     engine.handle(status(2))
+    assert engine.state.phase is RacePhase.STARTING
+
+
+@pytest.mark.parametrize("how", ["stop", "reset"])
+def test_stop_while_cu_stays_armed_does_not_auto_prepare(how):
+    engine, _ = make(RaceConfig(mode=RaceMode.PRACTICE))
+    engine.prepare(engine.config)
+    engine.handle(status(1))  # armed, race still STARTING
+    getattr(engine, how)()
+    expected = RacePhase.FINISHED if how == "stop" else RacePhase.IDLE
+    for _ in range(5):  # the CU keeps reporting the same level
+        assert engine.handle(status(1)) == []
+        assert engine.state.phase is expected
+    assert engine.race_id is None
+    # A real transition after the stop: back to 0, then a new press arms again.
+    engine.handle(status(0))
+    assert engine.state.phase is expected
+    engine.handle(status(1))
+    assert engine.state.phase is RacePhase.STARTING
+    for light in (2, 3, 4, 5, 6):
+        engine.handle(status(light))
+    assert len(of_type(engine.handle(status(7)), RaceStarted)) == 1
+
+
+def test_light_change_after_stop_counts_as_a_press():
+    engine, _ = make(RaceConfig(mode=RaceMode.PRACTICE))
+    engine.prepare(engine.config)
+    engine.handle(status(1))
+    engine.stop()
+    engine.handle(status(1))
+    assert engine.state.phase is RacePhase.FINISHED
+    engine.handle(status(2))  # the countdown began: a new race
     assert engine.state.phase is RacePhase.STARTING
 
 
@@ -345,22 +389,55 @@ def test_update_cars_renames():
 # ---------------------------------------------------------------- pit / fuel
 
 
-def test_pit_entry_exit_and_pit_stops():
+def _pit_setup():
     engine, clock = make()
     go(engine)
     cross(engine, 0, 1000)  # start pass: fuel/pit tracked from here
-    mode = MODE_FUEL | MODE_PIT_LANE
-    pit = [True] + [False] * 7
-    ev = engine.handle(status(0, pit=pit, mode=mode))
+    return engine, clock
+
+
+PIT_MODE = MODE_FUEL | MODE_PIT_LANE
+IN_PIT = [True] + [False] * 7
+
+
+def test_pit_entry_exit_and_pit_stops():
+    engine, clock = _pit_setup()
+    assert engine.handle(status(0, pit=IN_PIT, mode=PIT_MODE)) == []  # first frame: pending
+    clock.advance(0.2)
+    ev = engine.handle(status(0, pit=IN_PIT, mode=PIT_MODE))  # second frame confirms
     assert [e.address for e in of_type(ev, PitEntry)] == [0]
     assert engine.state.cars[0].in_pit and engine.state.pit_lane
-    assert engine.handle(status(0, pit=pit, mode=mode)) == []
-    clock.advance(3.5)
-    ev = engine.handle(status(0, fuel=[15] * 8, mode=mode))
+    assert engine.handle(status(0, pit=IN_PIT, mode=PIT_MODE)) == []
+    clock.advance(3.3)
+    assert engine.handle(status(0, fuel=[15] * 8, mode=PIT_MODE)) == []  # pending exit
+    clock.advance(0.2)
+    ev = engine.handle(status(0, fuel=[15] * 8, mode=PIT_MODE))
     out = of_type(ev, PitExit)
+    # Measured between the first frame of the pit state and the first frame of the exit.
     assert len(out) == 1 and out[0].duration_ms == 3500 and out[0].fuel == 15
     cs = engine.state.cars[0]
     assert not cs.in_pit and cs.pit_stops == 1
+
+
+def test_single_frame_pit_blip_is_ignored():
+    engine, clock = _pit_setup()
+    assert engine.handle(status(0, pit=IN_PIT, mode=PIT_MODE)) == []
+    clock.advance(0.2)
+    assert engine.handle(status(0, mode=PIT_MODE)) == []
+    clock.advance(0.2)
+    assert engine.handle(status(0, mode=PIT_MODE)) == []
+    assert not engine.state.cars[0].in_pit and engine.state.cars[0].pit_stops == 0
+    # The same blip while in the pit does not produce a phantom exit/entry either.
+    engine.handle(status(0, pit=IN_PIT, mode=PIT_MODE))
+    clock.advance(0.2)
+    engine.handle(status(0, pit=IN_PIT, mode=PIT_MODE))
+    assert engine.state.cars[0].in_pit
+    clock.advance(1)
+    assert engine.handle(status(0, mode=PIT_MODE)) == []  # one frame out of the pit
+    clock.advance(0.2)
+    assert engine.handle(status(0, pit=IN_PIT, mode=PIT_MODE)) == []
+    cs = engine.state.cars[0]
+    assert cs.in_pit and cs.pit_stops == 1
 
 
 def test_low_fuel_once_and_rearmed():

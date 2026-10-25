@@ -44,6 +44,16 @@ export class AudioPlayer {
     return this.ctx !== null && this.ctx.state !== 'running'
   }
 
+  /** True while a commentary line is being played (sound effects duck under it). */
+  get speaking(): boolean {
+    return this.current !== null
+  }
+
+  /** The shared AudioContext (created on first use); null when Web Audio is unavailable. */
+  context(): AudioContext | null {
+    return this.ensureContext()
+  }
+
   subscribe(fn: () => void): () => void {
     this.listeners.add(fn)
     return () => {

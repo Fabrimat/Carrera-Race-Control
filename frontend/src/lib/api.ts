@@ -9,6 +9,7 @@ import type {
   SettingsResponse,
   Snapshot,
   TrackMode,
+  TrackRecordInfo,
 } from './types'
 
 /**
@@ -71,5 +72,8 @@ export const api = {
   races: () => request<{ races: RaceSummary[] }>('GET', '/api/races'),
   race: (id: number) => request<RaceDetail>('GET', `/api/races/${id}`),
   exportUrl: (id: number, format: 'csv' | 'json') => `/api/races/${id}/export?format=${format}`,
+  getRecords: () => request<{ records: TrackRecordInfo[] }>('GET', '/api/records'),
+  deleteRecord: (layout: string) =>
+    request<{ records: TrackRecordInfo[] }>('DELETE', `/api/records/${encodeURIComponent(layout)}`),
   mute: (muted: boolean) => request<{ muted: boolean }>('POST', '/api/commentary/mute', { muted }),
 }

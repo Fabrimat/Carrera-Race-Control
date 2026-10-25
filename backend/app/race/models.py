@@ -97,6 +97,17 @@ class BestLapRecord(BaseModel):
     lap_number: int
 
 
+class TrackRecordInfo(BaseModel):
+    """All-time best valid lap on a track layout, across races."""
+
+    layout: str
+    lap_ms: int
+    address: int
+    holder_name: str  # car name/nickname at the time the record was set
+    race_id: int | None = None
+    set_at: datetime = Field(default_factory=utcnow)
+
+
 class RaceState(BaseModel):
     race_id: int | None = None
     phase: RacePhase = RacePhase.IDLE
@@ -109,6 +120,7 @@ class RaceState(BaseModel):
     pit_lane: bool = False
     cars: list[CarState] = Field(default_factory=list)  # sorted by position, unplaced last
     best_lap: BestLapRecord | None = None
+    track_record: TrackRecordInfo | None = None  # for the current settings.track_layout
 
 
 # --------------------------------------------------------------------------- events
@@ -180,6 +192,17 @@ class Idle(_EventBase):
     seconds: int
 
 
+class TrackRecord(_EventBase):
+    """A valid lap beat the all-time record of the current layout (emitted by the controller)."""
+
+    type: Literal["track_record"] = "track_record"
+    address: int
+    lap_ms: int
+    layout: str
+    previous_ms: int | None = None  # None when this layout had no record yet
+    previous_holder: str | None = None
+
+
 RaceEvent = Annotated[
     RaceStarted
     | LapCompleted
@@ -189,7 +212,8 @@ RaceEvent = Annotated[
     | PitExit
     | LowFuel
     | RaceFinished
-    | Idle,
+    | Idle
+    | TrackRecord,
     Field(discriminator="type"),
 ]
 
@@ -240,6 +264,8 @@ class CommentarySettings(BaseModel):
 class TrackSettings(BaseModel):
     mode: Literal["simulator", "ble", "serial"] = "simulator"
     address: str | None = None  # BLE address or serial port
+    # Name of the current track layout; all-time lap records are kept per layout.
+    layout: str = Field(default="default", min_length=1, max_length=40)
 
 
 class Settings(BaseModel):

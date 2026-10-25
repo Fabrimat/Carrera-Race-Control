@@ -55,4 +55,20 @@ describe('Leaderboard', () => {
     expect(screen.getByText('1:12,340')).toBeInTheDocument()
     expect(screen.getByRole('table', { name: 'Classifica' })).toBeInTheDocument()
   })
+
+  it('marks the track record holder in gold instead of purple', () => {
+    render(
+      <Leaderboard
+        cars={cars}
+        bestLap={{ address: 0, lap_ms: 6900, lap_number: 3 }}
+        trackRecord={{ layout: 'default', lap_ms: 6900, address: 0, holder_name: 'Rosso', race_id: 1, set_at: '2026-01-01T00:00:00Z' }}
+        fuelMode={false}
+      />,
+    )
+    expect(screen.getAllByTestId('record-badge')).toHaveLength(1)
+    const rec = screen.getAllByTestId('best-lap').filter((c) => c.dataset.record === 'true')
+    expect(rec).toHaveLength(1)
+    expect(rec[0]).toHaveClass('text-gold')
+    expect(rec[0]).not.toHaveClass('text-purple')
+  })
 })

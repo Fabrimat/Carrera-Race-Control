@@ -1,11 +1,12 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useFormat, useT } from '../i18n/useT'
 import { api } from '../lib/api'
-import { apiErrorMessage } from '../lib/errors'
+import { apiErrorMessage, guarded } from '../lib/errors'
 import { formatDateTime } from '../lib/format'
-import { LapChart, seriesFromLaps } from '../components/LapChart'
+import { LazyLapChart } from '../components/LazyLapChart'
+import { seriesFromLaps } from '../lib/series'
 import { useStore } from '../lib/store'
-import type { RaceDetail, RaceSummary } from '../lib/types'
+import type { RaceDetail, RaceSummary, TrackRecordInfo } from '../lib/types'
 
 type Loaded<T> = { data: T | null; error: string | null; loading: boolean }
 
@@ -24,6 +25,97 @@ function useLoad<T>(fn: () => Promise<T>, key: string | number): Loaded<T> {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, t])
   return state
+}
+
+function TrackRecords() {
+  const t = useT()
+  const f = useFormat()
+  const [records, setRecords] = useState<TrackRecordInfo[]>([])
+  const [error, setError] = useState<string | null>(null)
+  const [confirming, setConfirming] = useState<string | null>(null)
+
+  const load = useCallback(
+    () =>
+      api.getRecords().then(
+        (r) => {
+          setRecords(r.records)
+          setError(null)
+        },
+        (e) => setError(apiErrorMessage(e, t)),
+      ),
+    [t],
+  )
+  useEffect(() => {
+    void load()
+  }, [load])
+
+  const reset = async (layout: string) => {
+    setConfirming(null)
+    const res = await guarded(() => api.deleteRecord(layout))
+    if (res) {
+      setRecords(res.records)
+      useStore.getState().pushToast(t('records.deleted'), 'info')
+    } else {
+      void load() // e.g. already gone: show the real list
+    }
+  }
+
+  return (
+    <section className="mt-8" aria-label={t('records.title')} data-testid="track-records">
+      <h3 className="mb-2 text-sm font-bold uppercase tracking-widest text-dim">{t('records.title')}</h3>
+      {error && <p role="alert" className="text-signal">{error}</p>}
+      {!error && records.length === 0 && <p className="text-dim">{t('records.empty')}</p>}
+      {records.length > 0 && (
+        <table className="w-full text-left">
+          <thead className="text-xs uppercase tracking-widest text-dim">
+            <tr>
+              <th className="p-2">{t('records.layout')}</th>
+              <th className="p-2 text-right">{t('records.time')}</th>
+              <th className="p-2">{t('records.holder')}</th>
+              <th className="p-2">{t('records.date')}</th>
+              <th className="p-2" />
+            </tr>
+          </thead>
+          <tbody>
+            {records.map((r) => (
+              <tr key={r.layout} className="border-t border-line" data-testid="record-row">
+                <td className="p-2 font-semibold">{r.layout}</td>
+                <td className="num p-2 text-right text-gold">{f.lap(r.lap_ms)}</td>
+                <td className="p-2">{r.holder_name}</td>
+                <td className="p-2">{formatDateTime(r.set_at, f.lang)}</td>
+                <td className="p-2 text-right">
+                  {confirming === r.layout ? (
+                    <span className="inline-flex items-center gap-2">
+                      <span className="text-sm text-dim">{t('records.confirm_question', { layout: r.layout })}</span>
+                      <button
+                        className="rounded-md bg-signal px-3 py-1 text-sm font-bold uppercase text-white"
+                        onClick={() => void reset(r.layout)}
+                      >
+                        {t('records.confirm')}
+                      </button>
+                      <button
+                        className="rounded-md bg-panel-2 px-3 py-1 text-sm font-bold uppercase"
+                        onClick={() => setConfirming(null)}
+                      >
+                        {t('common.cancel')}
+                      </button>
+                    </span>
+                  ) : (
+                    <button
+                      className="rounded-md bg-panel-2 px-3 py-1 text-sm font-bold uppercase"
+                      onClick={() => setConfirming(r.layout)}
+                    >
+                      {t('records.reset')}
+                    </button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </section>
+  )
 }
 
 export function History() {
@@ -65,6 +157,7 @@ export function History() {
           </tbody>
         </table>
       )}
+      <TrackRecords />
     </div>
   )
 }
@@ -127,7 +220,7 @@ export function HistoryDetail({ id }: { id: number }) {
             </tbody>
           </table>
           <h3 className="mb-2 mt-6 text-sm font-bold uppercase tracking-widest text-dim">{t('chart.title')}</h3>
-          <LapChart series={seriesFromLaps(data.laps, data.results)} />
+          <LazyLapChart series={seriesFromLaps(data.laps, data.results)} />
         </>
       )}
     </div>

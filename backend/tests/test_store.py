@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,7 @@ from app.race.models import (
     RacePhase,
     RaceState,
     Settings,
+    TrackRecordInfo,
     Verbosity,
 )
 from app.race.store import RaceStore
@@ -168,3 +170,122 @@ def test_file_database_persists_and_creates_parent_dir(tmp_path: Path) -> None:
         assert reopened.list_races()[0]["id"] == race_id
     finally:
         reopened.close()
+
+
+# --------------------------------------------------------------------------- track records
+
+# The schema exactly as version 1 of the store created it.
+_V1_SCHEMA = """
+CREATE TABLE schema_version (version INTEGER NOT NULL);
+CREATE TABLE races (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    started_at TEXT NOT NULL,
+    finished_at TEXT,
+    mode TEXT NOT NULL,
+    config_json TEXT NOT NULL,
+    cars_json TEXT NOT NULL,
+    winner_name TEXT,
+    results_json TEXT
+);
+CREATE TABLE laps (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    race_id INTEGER NOT NULL REFERENCES races(id) ON DELETE CASCADE,
+    address INTEGER NOT NULL,
+    lap_number INTEGER NOT NULL,
+    lap_ms INTEGER NOT NULL,
+    race_time_ms INTEGER NOT NULL,
+    valid INTEGER NOT NULL
+);
+CREATE INDEX laps_race ON laps(race_id, id);
+CREATE TABLE settings (key TEXT PRIMARY KEY, value_json TEXT NOT NULL);
+CREATE TABLE counters (key TEXT PRIMARY KEY, value INTEGER NOT NULL);
+"""
+
+
+def _make_v1_db(path: Path) -> None:
+    conn = sqlite3.connect(path)
+    conn.executescript(_V1_SCHEMA)
+    conn.execute("INSERT INTO schema_version (version) VALUES (1)")
+    config = RaceConfig(mode=RaceMode.LAPS, target_laps=2)
+    conn.execute(
+        "INSERT INTO races (started_at, mode, config_json, cars_json) VALUES (?, ?, ?, ?)",
+        ("2026-01-01T00:00:00+00:00", "laps", config.model_dump_json(), "[]"),
+    )
+    conn.execute(
+        "INSERT INTO laps (race_id, address, lap_number, lap_ms, race_time_ms, valid) "
+        "VALUES (1, 0, 1, 6000, 6000, 1)"
+    )
+    settings = Settings()
+    settings.cars = CARS
+    conn.execute(
+        "INSERT INTO settings (key, value_json) VALUES ('settings', ?)",
+        (settings.model_dump_json(),),
+    )
+    conn.execute("INSERT INTO counters (key, value) VALUES ('tts_chars:2026-01', 42)")
+    conn.commit()
+    conn.close()
+
+
+def test_v1_database_upgrades_in_place(tmp_path: Path) -> None:
+    path = tmp_path / "old.db"
+    _make_v1_db(path)
+
+    store = RaceStore(path)
+    try:
+        detail = store.get_race(1)
+        assert detail is not None
+        assert detail["laps"][0]["lap_ms"] == 6000
+        assert [c.name for c in store.load_settings().cars] == ["Rossa", "Blu"]
+        assert store.get_counter("tts_chars:2026-01") == 42
+        assert store.list_records() == []
+        store.set_record(TrackRecordInfo(layout="a", lap_ms=1, address=0, holder_name="x"))
+    finally:
+        store.close()
+
+    conn = sqlite3.connect(path)
+    assert conn.execute("SELECT version FROM schema_version").fetchall() == [(2,)]
+    conn.close()
+    # Reopening an already upgraded database is a no-op.
+    reopened = RaceStore(path)
+    try:
+        assert reopened.get_record("a") is not None
+    finally:
+        reopened.close()
+
+
+def test_newer_schema_version_is_refused(tmp_path: Path) -> None:
+    path = tmp_path / "future.db"
+    RaceStore(path).close()
+    conn = sqlite3.connect(path)
+    conn.execute("UPDATE schema_version SET version = 99")
+    conn.commit()
+    conn.close()
+    with pytest.raises(RuntimeError, match="newer"):
+        RaceStore(path)
+
+
+def test_record_crud(store: RaceStore) -> None:
+    assert store.get_record("main") is None
+    assert store.delete_record("main") is False
+    store.set_record(TrackRecordInfo(layout="zeta", lap_ms=5000, address=1, holder_name="Blu"))
+    first = TrackRecordInfo(layout="main", lap_ms=5200, address=0, holder_name="Rocky", race_id=3)
+    store.set_record(first)
+    assert store.get_record("main") == first
+    assert [r.layout for r in store.list_records()] == ["main", "zeta"]
+
+    better = first.model_copy(update={"lap_ms": 5100, "holder_name": "Blu", "address": 1})
+    store.set_record(better)
+    assert store.get_record("main") == better
+    assert len(store.list_records()) == 2
+
+    assert store.delete_record("main") is True
+    assert store.get_record("main") is None
+    assert [r.layout for r in store.list_records()] == ["zeta"]
+
+
+def test_record_layout_is_a_parameter_not_sql(store: RaceStore) -> None:
+    evil = "x'; DROP TABLE track_records; --"
+    store.set_record(TrackRecordInfo(layout=evil, lap_ms=1, address=0, holder_name="h"))
+    assert store.get_record(evil) is not None
+    assert store.delete_record(evil) is True
+    assert store.list_records() == []

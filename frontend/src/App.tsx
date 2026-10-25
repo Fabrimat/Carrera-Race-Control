@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { lazy, Suspense, useEffect } from 'react'
 import { Header } from './components/Header'
 import { Toasts } from './components/Toasts'
 import { useLanguage, useT } from './i18n/useT'
@@ -8,9 +8,12 @@ import { useRoute } from './lib/route'
 import { useStore } from './lib/store'
 import { wsClient } from './lib/ws'
 import { Dashboard } from './pages/Dashboard'
-import { History, HistoryDetail } from './pages/History'
-import { SettingsPage } from './pages/SettingsPage'
-import { TvMode } from './pages/TvMode'
+
+// Secondary pages are loaded on demand to keep the initial bundle small.
+const History = lazy(() => import('./pages/History').then((m) => ({ default: m.History })))
+const HistoryDetail = lazy(() => import('./pages/History').then((m) => ({ default: m.HistoryDetail })))
+const SettingsPage = lazy(() => import('./pages/SettingsPage').then((m) => ({ default: m.SettingsPage })))
+const TvMode = lazy(() => import('./pages/TvMode').then((m) => ({ default: m.TvMode })))
 
 export default function App() {
   const route = useRoute()
@@ -49,11 +52,13 @@ export default function App() {
     <div className="flex min-h-full flex-col">
       {route.name !== 'tv' && <Header route={route} />}
       <main className="flex-1">
-        {route.name === 'dashboard' && <Dashboard />}
-        {route.name === 'history' && <History />}
-        {route.name === 'history-detail' && <HistoryDetail id={route.id} />}
-        {route.name === 'settings' && <SettingsPage />}
-        {route.name === 'tv' && <TvMode />}
+        <Suspense fallback={<p className="p-6 text-dim">{t('common.loading')}</p>}>
+          {route.name === 'dashboard' && <Dashboard />}
+          {route.name === 'history' && <History />}
+          {route.name === 'history-detail' && <HistoryDetail id={route.id} />}
+          {route.name === 'settings' && <SettingsPage />}
+          {route.name === 'tv' && <TvMode />}
+        </Suspense>
       </main>
       <Toasts />
     </div>

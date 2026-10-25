@@ -73,6 +73,10 @@ from app.track.base import (
 _HALF_MODULO = TIMESTAMP_MODULO // 2
 
 
+# Consecutive Status frames (~180 ms each on the real CU) needed to confirm a pit change.
+PIT_CONFIRM_FRAMES = 2
+
+
 @dataclass
 class _Car:
     address: int
@@ -87,6 +91,8 @@ class _Car:
     fuel: int | None = None
     in_pit: bool = False
     pit_entered_ms: int = 0
+    pit_change_ms: int | None = None  # race time of the first frame of a pending pit change
+    pit_change_frames: int = 0
     pit_stops: int = 0
     low_fuel_armed: bool = True
     finished: bool = False
@@ -108,6 +114,9 @@ class RaceEngine:
         self.race_id: int | None = None
         self._configs: dict[int, CarConfig] = {c.address: c for c in cars}
         self._phase = RacePhase.IDLE
+        # Light level (1..6) that was showing when the race was stopped / reset: a CU that keeps
+        # reporting it has not been pressed again, so it must not auto-prepare a new race.
+        self._stale_light: int | None = None
         self._reset_runtime()
 
     # ------------------------------------------------------------------ lifecycle
@@ -135,10 +144,12 @@ class RaceEngine:
     def prepare(self, config: RaceConfig) -> None:
         """Arm a new race (phase STARTING) and clear all race data."""
         self.config = config
+        self._stale_light = None
         self._reset_runtime()
         self._phase = RacePhase.STARTING
 
     def reset(self) -> None:
+        self._remember_light()
         self._reset_runtime()
         self._phase = RacePhase.IDLE
 
@@ -174,9 +185,13 @@ class RaceEngine:
             self._phase = RacePhase.RUNNING
         return []
 
+    def _remember_light(self) -> None:
+        self._stale_light = self._start_light if 1 <= self._start_light <= 6 else None
+
     def stop(self) -> list[RaceEvent]:
         if self._phase in (RacePhase.IDLE, RacePhase.FINISHED):
             return []
+        self._remember_light()
         return self._finish_race()
 
     @property
@@ -360,14 +375,21 @@ class RaceEngine:
         self._fuel_mode = bool(msg.mode & MODE_FUEL)
         self._pit_lane = bool(msg.mode & MODE_PIT_LANE)
 
-        if self._phase in (RacePhase.IDLE, RacePhase.FINISHED) and 1 <= msg.start <= 6:
-            # The user pressed START on the CU itself: do not silently drop the race.
+        if self._stale_light is not None and msg.start != self._stale_light:
+            self._stale_light = None  # the CU's light changed: levels count again
+        if (
+            self._phase in (RacePhase.IDLE, RacePhase.FINISHED)
+            and 1 <= msg.start <= 6
+            and self._stale_light is None
+        ):
+            # The user pressed START on the CU itself (an observed transition into the light
+            # sequence, not a level left over from before a stop): do not drop the race.
             self.prepare(self.config)
             self._start_light = msg.start
             self._fuel_mode = bool(msg.mode & MODE_FUEL)
             self._pit_lane = bool(msg.mode & MODE_PIT_LANE)
         if self._phase is RacePhase.STARTING:
-            if 1 <= msg.start <= 6:
+            if 2 <= msg.start <= 6:  # light 1 is only "armed": no countdown yet
                 self._sequence_seen = True
             elif msg.start in (0, 7) and self._sequence_seen:
                 events.extend(self._begin_running())
@@ -395,19 +417,34 @@ class RaceEngine:
                 else:
                     car.low_fuel_armed = True
             in_pit = bool(msg.pit[address])
-            if in_pit and not car.in_pit:
+            if in_pit == car.in_pit:
+                car.pit_change_ms = None  # back to the settled value: it was a blip
+                car.pit_change_frames = 0
+                continue
+            # Debounce: a corrupted / transient frame must not make a phantom pit stop, so a
+            # change counts only after PIT_CONFIRM_FRAMES consecutive frames with the new value.
+            if car.pit_change_ms is None:
+                car.pit_change_ms = self._race_ms  # first frame of the new state
+                car.pit_change_frames = 0
+            car.pit_change_frames += 1
+            if car.pit_change_frames < PIT_CONFIRM_FRAMES:
+                continue
+            changed_ms = car.pit_change_ms
+            car.pit_change_ms = None
+            car.pit_change_frames = 0
+            if in_pit:
                 car.in_pit = True
-                car.pit_entered_ms = self._race_ms
+                car.pit_entered_ms = changed_ms
                 car.pit_stops += 1
                 if emit:
                     events.append(PitEntry(address=address, race_time_ms=self._race_ms))
-            elif car.in_pit and not in_pit:
+            else:
                 car.in_pit = False
                 if emit:
                     events.append(
                         PitExit(
                             address=address,
-                            duration_ms=max(0, self._race_ms - car.pit_entered_ms),
+                            duration_ms=max(0, changed_ms - car.pit_entered_ms),
                             fuel=car.fuel if self._fuel_mode else None,
                             race_time_ms=self._race_ms,
                         )

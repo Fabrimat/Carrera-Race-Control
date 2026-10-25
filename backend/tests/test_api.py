@@ -36,6 +36,7 @@ def factory(
             tts=tts or FakeTTS(available=False),
             writer=TemplateWriter(),
             track_factory=track_factory,
+            second_press_s=0.05,
         )
 
     return build
@@ -552,3 +553,35 @@ def test_unknown_host_is_rejected(make_client) -> None:
     assert r.status_code == 400
     assert client.get("/api/state", headers={"Host": "127.0.0.1:8000"}).status_code == 200
     assert client.get("/api/state", headers={"Host": "localhost:8000"}).status_code == 200
+
+
+def test_records_endpoints(make_client) -> None:
+    from app.race.models import TrackRecordInfo
+
+    client = make_client()
+    ctl = client.app.state.controller
+    assert client.get("/api/records").json() == {"records": []}
+
+    ctl.store.set_record(TrackRecordInfo(layout="b", lap_ms=5000, address=1, holder_name="Blu"))
+    ctl.store.set_record(TrackRecordInfo(layout="default", lap_ms=4000, address=0, holder_name="R"))
+    ctl.track_record = ctl.store.get_record("default")
+    records = client.get("/api/records").json()["records"]
+    assert [r["layout"] for r in records] == ["b", "default"]
+    assert records[0]["lap_ms"] == 5000 and records[0]["holder_name"] == "Blu"
+    assert client.get("/api/state").json()["race"]["track_record"]["lap_ms"] == 4000
+
+    r = client.delete("/api/records/nope")
+    assert r.status_code == 404 and r.json()["code"] == "record_not_found"
+
+    r = client.delete("/api/records/default")
+    assert r.status_code == 200
+    assert [x["layout"] for x in r.json()["records"]] == ["b"]
+    assert client.get("/api/state").json()["race"]["track_record"] is None
+    assert client.delete("/api/records/default").status_code == 404
+
+
+def test_record_layout_is_only_a_lookup_key(make_client) -> None:
+    client = make_client()
+    r = client.delete("/api/records/x%27%3B%20DROP%20TABLE%20track_records%3B--")
+    assert r.status_code == 404 and r.json()["code"] == "record_not_found"
+    assert client.get("/api/records").status_code == 200

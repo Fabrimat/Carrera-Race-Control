@@ -182,6 +182,22 @@ async def export_race(
     )
 
 
+# --------------------------------------------------------------------------- track records
+
+
+@router.get("/api/records")
+async def list_records(request: Request) -> dict[str, Any]:
+    return {"records": controller(request).store.list_records()}
+
+
+@router.delete("/api/records/{layout}")
+async def delete_record(request: Request, layout: str) -> dict[str, Any]:
+    ctl = controller(request)
+    if not ctl.delete_record(layout):
+        raise ControllerError(404, f"No record for layout {layout!r}", "record_not_found")
+    return {"records": ctl.store.list_records()}
+
+
 # --------------------------------------------------------------------------- commentary
 
 
