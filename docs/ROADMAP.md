@@ -24,6 +24,22 @@ between the Control Unit's few sensors (start/finish line and up to two Check La
   vision calls are too slow and costly.
 - **Risks.** Lighting, similar-coloured cars, occlusion by hands, and frame rate on the
   user's PC. Start with a prototype measuring detection rate on the real track.
+- **Incident management (with the commentator).**
+  - Detection:
+    - With the webcam, a car that leaves the path or stops is an incident; the camera
+      also gives its position.
+    - Without the webcam, a car overdue on its stretch (`TrackPosition.confidence ==
+      "stale"`, or no crossing for N × its expected time) is a *probable* incident.
+  - What happens next:
+    - A yellow-flag banner on the TV graphics, an "OFF at turn N" marker on the live
+      map, and an urgent commentator line ("Fulmine is off at the hairpin!").
+    - A **marshal call** on the control panel: which car, where, and a big
+      "back on track" button. Optionally the pace car is deployed automatically through
+      the CU (`toggle_pace_car`) until the car is back. The incident clears on the
+      marshal's confirmation or on the car's next sensor crossing.
+  - Logging: incidents are logged per car and per race (count and time lost) for the
+    results, statistics and commentary ("third off for Blu tonight").
+  - Rules: optional penalties per incident in the event configuration.
 
 ## 2. Car brand logos
 
