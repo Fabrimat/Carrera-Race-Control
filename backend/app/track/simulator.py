@@ -1,0 +1,321 @@
+"""Simulated Carrera Control Unit.
+
+Two layers:
+
+* :class:`SimulatedCU` is a deterministic, sleep-free model driven by an explicit virtual time
+  in milliseconds. It owns the random generator, the cars, the start light sequence, fuel/pit
+  behaviour and the CU's 32-bit millisecond clock.
+* :class:`SimulatorTrack` implements :class:`TrackInterface` on top of it, mapping real time
+  (scaled by ``time_scale``) to virtual time. :meth:`SimulatorTrack.generate` exposes the same
+  model as a plain generator so tests need neither sleeping nor an event loop.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import heapq
+import random
+import time
+from collections import deque
+from collections.abc import Callable, Iterator
+
+from app.track.base import (
+    MAX_FUEL,
+    MODE_FUEL,
+    MODE_PIT_LANE,
+    NUM_ADDRESSES,
+    TIMESTAMP_MODULO,
+    PollResult,
+    Status,
+    Timer,
+    TrackDisconnected,
+)
+
+LIGHT_STEP_MS = 1000  # one start light per second
+STATUS_INTERVAL_MS = 100
+PIT_FUEL_LEVEL = 2  # cars pit when fuel drops to this level (or below)
+SLOW_LAP_RATE = 0.03  # crash / deslot probability per lap
+
+
+class _SimCar:
+    def __init__(self, address: int, base_lap_ms: float) -> None:
+        self.address = address
+        self.base_lap_ms = base_lap_ms
+        self.fuel = MAX_FUEL
+        self.in_pit = False
+        self.crossings = 0
+
+
+class SimulatedCU:
+    """Deterministic CU model. All times are virtual milliseconds since creation."""
+
+    def __init__(
+        self,
+        num_cars: int,
+        rng: random.Random,
+        double_trigger_rate: float,
+        fuel: bool,
+        pit_lane: bool,
+        clock_offset_ms: int,
+    ) -> None:
+        self.rng = rng
+        self.double_trigger_rate = double_trigger_rate
+        self.fuel = fuel
+        self.pit_lane = pit_lane
+        self.cars = [_SimCar(i, rng.uniform(5000, 8000)) for i in range(num_cars)]
+        self.cu_offset = clock_offset_ms % TIMESTAMP_MODULO
+        self.cu_zero = 0.0
+        self.light = 0
+        self.started = False
+        self.paused_at: float | None = None
+        self._heap: list[tuple[float, int, str, int]] = []
+        self._frozen: list[tuple[float, str, int]] = []  # (remaining ms, kind, car)
+        self._seq = 0
+
+    # ---- helpers
+
+    def cu_ts(self, t: float) -> int:
+        return (self.cu_offset + int(t - self.cu_zero)) % TIMESTAMP_MODULO
+
+    @property
+    def mode(self) -> int:
+        return (MODE_FUEL if self.fuel else 0) | (MODE_PIT_LANE if self.pit_lane else 0)
+
+    def status(self) -> Status:
+        fuel = [0] * NUM_ADDRESSES
+        pit = [False] * NUM_ADDRESSES
+        for car in self.cars:
+            fuel[car.address] = car.fuel
+            pit[car.address] = car.in_pit
+        return Status(fuel=tuple(fuel), start=self.light, mode=self.mode, pit=tuple(pit))
+
+    def _push(self, t: float, kind: str, arg: int) -> None:
+        self._seq += 1
+        heapq.heappush(self._heap, (t, self._seq, kind, arg))
+
+    def _push_car_event(self, t: float, kind: str, arg: int) -> None:
+        if self.paused_at is not None:
+            self._frozen.append((t - self.paused_at, kind, arg))
+        else:
+            self._push(t, kind, arg)
+
+    @property
+    def next_event_time(self) -> float | None:
+        return self._heap[0][0] if self._heap else None
+
+    # ---- commands
+
+    def start(self, t: float) -> None:
+        if self.started:
+            return
+        self.started = True
+        for step in range(6):  # lights 1 (armed) .. 6
+            self._push(t + step * LIGHT_STEP_MS, "light", step + 1)
+        self._push(t + 6 * LIGHT_STEP_MS, "light", 7)  # go
+        self._push(t + 7 * LIGHT_STEP_MS, "light", 0)
+
+    def pause(self, t: float) -> None:
+        if self.paused_at is not None:
+            return
+        self.paused_at = t
+        keep = []
+        for entry in self._heap:
+            when, _, kind, arg = entry
+            if kind == "light":
+                keep.append(entry)
+            else:
+                self._frozen.append((when - t, kind, arg))
+        self._heap = keep
+        heapq.heapify(self._heap)
+
+    def resume(self, t: float) -> None:
+        if self.paused_at is None:
+            return
+        self.paused_at = None
+        frozen, self._frozen = self._frozen, []
+        for remaining, kind, arg in frozen:
+            self._push(t + remaining, kind, arg)
+
+    def toggle_pause(self, t: float) -> None:
+        if self.paused_at is None:
+            self.pause(t)
+        else:
+            self.resume(t)
+
+    def reset(self, t: float) -> None:
+        self.cu_offset = 0
+        self.cu_zero = t
+        self.light = 0
+        self.started = False
+        self.paused_at = None
+        self._heap.clear()
+        self._frozen.clear()
+        for car in self.cars:
+            car.fuel = MAX_FUEL
+            car.in_pit = False
+            car.crossings = 0
+
+    # ---- simulation
+
+    def _lap_ms(self, car: _SimCar) -> float:
+        lap = car.base_lap_ms * min(1.1, max(0.9, self.rng.gauss(1.0, 0.015)))
+        if self.rng.random() < SLOW_LAP_RATE:
+            lap += self.rng.uniform(4000, 9000)
+        if self.fuel and car.fuel == 0:
+            lap *= 1.3
+        return lap
+
+    def _go(self, t: float) -> None:
+        for car in self.cars:
+            self._push_car_event(
+                t + car.base_lap_ms * self.rng.uniform(0.1, 0.4), "cross", car.address
+            )
+
+    def _on_cross(self, t: float, car: _SimCar) -> None:
+        car.crossings += 1
+        if self.rng.random() < self.double_trigger_rate:
+            self._push_car_event(t + self.rng.randint(8, 50), "double", car.address)
+        extra = 0.0
+        if car.crossings > 1 and self.fuel:
+            car.fuel = max(0, car.fuel - self.rng.choice((1, 1, 2)))
+            if self.pit_lane and car.fuel <= PIT_FUEL_LEVEL and not car.in_pit:
+                car.in_pit = True
+                extra = self.rng.uniform(3000, 5000)
+                self._push_car_event(t + extra, "pit_end", car.address)
+        self._push_car_event(t + self._lap_ms(car) + extra, "cross", car.address)
+
+    def advance(self, now: float) -> list[tuple[float, PollResult]]:
+        """Process every event due at or before ``now``; returns (time, message) in order."""
+        out: list[tuple[float, PollResult]] = []
+        while self._heap and self._heap[0][0] <= now:
+            t, _, kind, arg = heapq.heappop(self._heap)
+            if kind == "light":
+                self.light = arg
+                out.append((t, self.status()))
+                if arg == 7:
+                    self._go(t)
+            elif kind == "cross":
+                out.append((t, Timer(address=arg, timestamp=self.cu_ts(t), sector=1)))
+                self._on_cross(t, self.cars[arg])
+            elif kind == "double":
+                out.append((t, Timer(address=arg, timestamp=self.cu_ts(t), sector=1)))
+            elif kind == "pit_end":
+                car = self.cars[arg]
+                car.in_pit = False
+                car.fuel = MAX_FUEL
+        return out
+
+
+class SimulatorTrack:
+    """TrackInterface implementation backed by :class:`SimulatedCU`."""
+
+    def __init__(
+        self,
+        num_cars: int = 4,
+        seed: int | None = None,
+        time_scale: float = 1.0,
+        double_trigger_rate: float = 0.01,
+        fuel: bool = True,
+        pit_lane: bool = True,
+        clock_offset_ms: int | None = None,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        if not 1 <= num_cars <= 6:
+            raise ValueError("num_cars must be between 1 and 6")
+        if time_scale <= 0:
+            raise ValueError("time_scale must be > 0")
+        rng = random.Random(seed)
+        if clock_offset_ms is None:
+            clock_offset_ms = rng.randrange(TIMESTAMP_MODULO)
+        self.time_scale = time_scale
+        self._clock = clock
+        self._t0: float | None = None
+        self._core = SimulatedCU(
+            num_cars, rng, double_trigger_rate, fuel, pit_lane, clock_offset_ms
+        )
+        self._queue: deque[PollResult] = deque()
+        self._next_status = 0.0
+        self._connected = False
+        self._closed = False
+
+    # ---- TrackInterface
+
+    @property
+    def connected(self) -> bool:
+        return self._connected and not self._closed
+
+    async def connect(self) -> None:
+        self._connected = True
+        self._closed = False
+        if self._t0 is None:
+            self._t0 = self._clock()
+
+    def _now(self) -> float:
+        if self._t0 is None:
+            self._t0 = self._clock()
+        return (self._clock() - self._t0) * 1000 * self.time_scale
+
+    def _fill(self, now: float) -> None:
+        for _, msg in self._core.advance(now):
+            self._queue.append(msg)
+        if now >= self._next_status:
+            self._queue.append(self._core.status())
+            self._next_status += STATUS_INTERVAL_MS
+            if self._next_status <= now:
+                self._next_status = now + STATUS_INTERVAL_MS
+
+    async def poll(self) -> PollResult:
+        while True:
+            if self._closed:
+                raise TrackDisconnected("simulator closed")
+            if not self._queue:
+                now = self._now()
+                self._fill(now)
+            if self._queue:
+                # Timers first, otherwise the oldest message.
+                for i, msg in enumerate(self._queue):
+                    if isinstance(msg, Timer):
+                        del self._queue[i]
+                        return msg
+                return self._queue.popleft()
+            due = self._next_status
+            nxt = self._core.next_event_time
+            if nxt is not None:
+                due = min(due, nxt)
+            delay = max(0.0, (due - self._now()) / (1000 * self.time_scale))
+            await asyncio.sleep(delay)
+
+    async def start(self) -> None:
+        now = self._now()
+        self._fill(now)
+        self._core.start(now)
+
+    async def toggle_pace_car(self) -> None:
+        now = self._now()
+        self._fill(now)
+        self._core.toggle_pause(now)
+
+    async def reset_timer(self) -> None:
+        now = self._now()
+        self._core.reset(now)
+        self._queue.clear()
+
+    async def close(self) -> None:
+        self._closed = True
+
+    # ---- deterministic, sleep-free driver for tests
+
+    def generate(
+        self, status_interval_ms: int = STATUS_INTERVAL_MS, auto_start: bool = True
+    ) -> Iterator[tuple[float, PollResult]]:
+        """Infinite (virtual time ms, message) stream; starts the light sequence at t=0.
+
+        Do not mix with :meth:`poll` on the same instance.
+        """
+        if auto_start:
+            self._core.start(0.0)
+        t = 0.0
+        while True:
+            yield from self._core.advance(t)
+            yield t, self._core.status()
+            t += status_interval_ms
