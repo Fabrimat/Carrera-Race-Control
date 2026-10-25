@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import base64
 import csv
 import io
 import json
+import math
 import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -21,13 +23,17 @@ from app.service import RaceController, TrackFactory
 from app.track.base import TrackConnectionError
 from tests.test_commentary_fakes import FakeTTS
 from tests.test_service import FakeTrack, make_config
+from tests.test_vision import fake_client, make_png, reply
 
 SECRET_EL = "el-secret-value-123"
 SECRET_ANT = "ant-secret-value-456"
+PNG_MAGIC = bytes.fromhex("89504e470d0a1a0a")
 
 
 def factory(
-    tts: FakeTTS | None = None, track_factory: TrackFactory | None = None
+    tts: FakeTTS | None = None,
+    track_factory: TrackFactory | None = None,
+    vision_client: Any | None = None,
 ) -> Callable[[AppConfig, RaceStore], RaceController]:
     def build(config: AppConfig, store: RaceStore) -> RaceController:
         return RaceController(
@@ -36,6 +42,7 @@ def factory(
             tts=tts or FakeTTS(available=False),
             writer=TemplateWriter(),
             track_factory=track_factory,
+            vision_client=vision_client,
             second_press_s=0.05,
         )
 
@@ -52,10 +59,11 @@ def make_client(tmp_path: Path) -> Iterator[Callable[..., TestClient]]:
         track_factory: TrackFactory | None = None,
         autoconnect: bool = False,
         frontend_dist: Path | None = None,
+        vision_client: Any | None = None,
     ) -> TestClient:
         app = create_app(
             config or make_config(tmp_path),
-            controller_factory=factory(tts, track_factory),
+            controller_factory=factory(tts, track_factory, vision_client),
             autoconnect=autoconnect,
             frontend_dist=frontend_dist,
         )
@@ -585,3 +593,173 @@ def test_record_layout_is_only_a_lookup_key(make_client) -> None:
     r = client.delete("/api/records/x%27%3B%20DROP%20TABLE%20track_records%3B--")
     assert r.status_code == 404 and r.json()["code"] == "record_not_found"
     assert client.get("/api/records").status_code == 200
+
+
+# --------------------------------------------------------------------------- track layouts
+
+
+def layout_body(name: str = "main", **overrides: Any) -> dict[str, Any]:
+    body: dict[str, Any] = {
+        "name": name,
+        "points": [
+            [0.5 + 0.4 * math.cos(2 * math.pi * i / 12), 0.5 + 0.3 * math.sin(2 * math.pi * i / 12)]
+            for i in range(12)
+        ],
+        "aspect": 1.5,
+        "sensors": [{"sensor": 3, "s": 0.7}, {"sensor": 2, "s": 0.3}],
+        "pit_s": 0.9,
+        "source": "drawn",
+    }
+    body.update(overrides)
+    return body
+
+
+def test_layout_crud_roundtrip(make_client) -> None:
+    client = make_client()
+    assert client.get("/api/layouts").json() == {"layouts": []}
+    missing = client.get("/api/layouts/main")
+    assert (missing.status_code, missing.json()["code"]) == (404, "layout_not_found")
+
+    saved = client.put("/api/layouts/main", json=layout_body())
+    assert saved.status_code == 200
+    assert saved.json()["name"] == "main"
+    assert client.get("/api/layouts/main").json()["sensors"][0]["sensor"] == 3
+    client.put("/api/layouts/alpha", json=layout_body("alpha"))
+    assert [item["name"] for item in client.get("/api/layouts").json()["layouts"]] == [
+        "alpha",
+        "main",
+    ]
+
+    gone = client.delete("/api/layouts/main")
+    assert [item["name"] for item in gone.json()["layouts"]] == ["alpha"]
+    again = client.delete("/api/layouts/main")
+    assert (again.status_code, again.json()["code"]) == (404, "layout_not_found")
+
+
+def test_current_layout_shows_up_in_the_race_state(make_client) -> None:
+    client = make_client()
+    client.put("/api/layouts/default", json=layout_body("default"))
+    assert client.get("/api/state").json()["race"]["layout"] == "default"
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda b: b.update(name="other"),  # name must match the URL
+        lambda b: b.update(points=[[0.1, 0.1]] * 12),  # degenerate and duplicate
+        lambda b: b.update(points=[[0.5 + 0.01 * i, 0.5] for i in range(12)]),  # too short
+        lambda b: b.update(points=[[1.5, 0.5]] + b["points"][1:]),  # outside the square
+        lambda b: b.update(sensors=[{"sensor": 2, "s": 0.3}, {"sensor": 2, "s": 0.6}]),
+        lambda b: b.update(sensors=[{"sensor": 2, "s": 0.3}, {"sensor": 3, "s": 0.305}]),
+        lambda b: b.update(sensors=[{"sensor": 2, "s": 0.005}]),  # on the line
+        lambda b: b.update(sensors=[{"sensor": 2, "s": 0.995}]),  # on the line (wrapped)
+    ],
+)
+def test_layout_put_rejects_bad_geometry(make_client, mutate) -> None:
+    client = make_client()
+    body = layout_body()
+    mutate(body)
+    response = client.put("/api/layouts/main", json=body)
+    assert (response.status_code, response.json()["code"]) == (422, "layout_invalid")
+    assert client.get("/api/layouts").json() == {"layouts": []}
+
+
+def test_layout_put_schema_errors_are_invalid_request(make_client) -> None:
+    response = make_client().put("/api/layouts/main", json=layout_body(points=[[0, 0]]))
+    assert (response.status_code, response.json()["code"]) == (422, "invalid_request")
+
+
+def photo_request(data: bytes | None = None, **overrides: Any) -> dict[str, Any]:
+    body = {
+        "image_base64": base64.b64encode(data or make_png()).decode(),
+        "media_type": "image/png",
+        "name": "Oval",
+        "language": "en",
+    }
+    body.update(overrides)
+    return body
+
+
+def test_from_photo_returns_an_unsaved_draft(make_client) -> None:
+    client = make_client(vision_client=fake_client(reply(notes="direction guessed")))
+    response = client.post("/api/layouts/from-photo", json=photo_request())
+    assert response.status_code == 200
+    draft = response.json()
+    assert draft["notes"] == "direction guessed"
+    assert draft["layout"]["source"] == "photo"
+    assert draft["layout"]["aspect"] == pytest.approx(1.5)
+    assert len(draft["layout"]["points"]) == 200
+    assert client.get("/api/layouts").json() == {"layouts": []}  # not persisted
+
+
+def test_from_photo_without_key_is_503(make_client) -> None:
+    response = make_client().post("/api/layouts/from-photo", json=photo_request())
+    assert (response.status_code, response.json()["code"]) == (503, "llm_unavailable")
+
+
+@pytest.mark.parametrize(
+    ("data", "status", "code"),
+    [
+        (b"GIF89a....", 422, "invalid_image"),
+        (PNG_MAGIC + bytes(8 * 1024 * 1024 + 1), 413, "image_too_large"),
+    ],
+    ids=["invalid", "too_large"],
+)
+def test_from_photo_image_errors(make_client, data: bytes, status: int, code: str) -> None:
+    client = make_client(vision_client=fake_client(reply()))
+    response = client.post("/api/layouts/from-photo", json=photo_request(data))
+    assert (response.status_code, response.json()["code"]) == (status, code)
+
+
+def test_from_photo_model_says_not_found(make_client) -> None:
+    client = make_client(vision_client=fake_client(reply(found=False, notes="no track")))
+    response = client.post("/api/layouts/from-photo", json=photo_request())
+    assert (response.status_code, response.json()["code"]) == (422, "photo_unrecognised")
+
+
+# --------------------------------------------------------------------------- body size cap
+
+
+def test_oversized_content_length_is_413(make_client) -> None:
+    client = make_client()
+    big = client.put("/api/settings", content=bytes(1024 * 1024 + 1))
+    assert big.status_code == 413
+    photo = client.post("/api/layouts/from-photo", content=bytes(12 * 1024 * 1024 + 1))
+    assert (photo.status_code, photo.json()["code"]) == (413, "image_too_large")
+
+
+def test_chunked_oversize_is_413(make_client) -> None:
+    client = make_client()
+
+    def chunks() -> Iterator[bytes]:
+        for _ in range(3):
+            yield bytes(512 * 1024)
+
+    response = client.put(
+        "/api/settings", content=chunks(), headers={"content-type": "application/json"}
+    )
+    assert response.status_code == 413
+
+
+def test_photo_between_the_limits_is_not_capped(make_client) -> None:
+    # 2 MB of body: above the generic cap but fine for the photo endpoint (then invalid).
+    body = photo_request(PNG_MAGIC + bytes(1_500_000))
+    response = make_client().post("/api/layouts/from-photo", json=body)
+    assert response.status_code != 413
+
+
+def test_normal_put_settings_still_passes(make_client) -> None:
+    client = make_client()
+    settings = client.get("/api/settings").json()
+    assert client.put("/api/settings", json=settings).status_code == 200
+
+
+def test_validation_errors_do_not_echo_the_input(make_client) -> None:
+    body = photo_request()
+    del body["name"]
+    response = make_client(vision_client=fake_client(reply())).post(
+        "/api/layouts/from-photo", json=body
+    )
+    assert (response.status_code, response.json()["code"]) == (422, "invalid_request")
+    assert body["image_base64"] not in response.text
+    assert len(response.text) < 1000

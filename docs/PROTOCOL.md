@@ -82,9 +82,16 @@ RaceDetail = Omit<RaceSummary, "laps"> & {   // `laps` is the lap list here, not
 | `start_failed` | 503 | the CU did not accept the start command (the race is not started) |
 | `pace_car_failed` | 503 | the CU did not accept the pace car command |
 | `settings_invalid` | 422 | `PUT /api/settings`: more than 8 cars, duplicate addresses, name > 40 chars, color not `#RRGGBB` |
+| `layout_invalid` | 422 | `PUT /api/layouts/{name}`: name differs from the URL, points outside 0..1, repeated consecutive points, path length <= 0.5, duplicate sensor numbers, sensors less than 0.01 of the lap apart or from the line |
 | `race_not_found` | 404 | unknown race id (detail / export) |
 | `record_not_found` | 404 | `DELETE /api/records/{layout}` for a layout without a record |
 | `audio_not_found` | 404 | no audio for that commentary line |
+| `layout_not_found` | 404 | unknown layout name (`GET` / `DELETE /api/layouts/{name}`) |
+| `llm_unavailable` | 503 | `POST /api/layouts/from-photo`: no Anthropic key, the key / vision model was rejected (HTTP 401, 403, 404), or Anthropic is unreachable, slow (45 s timeout), throttling (429) or failing (5xx): not the photo's fault, try again later |
+| `photo_unrecognised` | 422 | `from-photo`: no closed track found, unusable or too coarse reply, or the API rejected the request (other 4xx) |
+| `photo_busy` | 429 | `from-photo`: another photo conversion is already running (one at a time); retry shortly |
+| `image_too_large` | 413 | `from-photo`: image larger than 8 MB (decoded) |
+| `invalid_image` | 422 | `from-photo`: not base64, or not JPEG / PNG / WebP (magic bytes checked) |
 | `invalid_request` | 422 | the request body / query does not match the schema |
 | `forbidden_origin` | 403 | cross-origin state-changing request (see "Security") |
 
@@ -158,7 +165,9 @@ also fills `CarState.track_pos` (see `TrackPosition` in models.py) and the brows
 animates the dot between `s_from` and `s_to` with its own clock, re-synchronised on
 every `state` message (`RaceState.race_time_ms` at send time). The dot never passes the
 next sensor before the CU reports it; `confidence: "stale"` (overdue by a wide margin)
-is shown dimmed. Cars in the pit are drawn at `pit_s`.
+is shown dimmed. Cars in the pit are drawn at `pit_s`. If a car's last sensor is a Check
+Lane the layout does not declare, the position falls back to its last start/finish
+crossing (`total_time_ms`) and the next declared sensor, or a full lap.
 
 ### REST
 

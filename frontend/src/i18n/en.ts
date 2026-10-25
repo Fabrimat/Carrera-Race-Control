@@ -33,6 +33,8 @@ export const en = {
   'error.forbidden_origin': 'Request refused: it did not come from this app.',
   'error.invalid_request': 'Invalid request.',
   'error.record_not_found': 'No record found for this layout.',
+  'error.layout_invalid': 'The track drawing is not valid: check the path and that the sensors are not too close.',
+  'error.photo_busy': 'Another photo is being analysed: wait a moment and try again.',
 
   'connError.busy':
     'The Control Unit is busy. Close the Carrera phone app: the unit accepts only one Bluetooth connection at a time.',
@@ -291,7 +293,7 @@ export const en = {
   'editor.photo_loaded': "Draft loaded over your photo. Correct the points where it is off, then save.",
   'editor.photo_bg_remove': "Hide photo",
   'editor.photo_bg_note': "The photo is only a background: when you save, the drawing is fitted to the frame.",
-  'editor.error_llm_unavailable': "Photo analysis is not available: add an Anthropic API key in the backend settings.",
+  'editor.error_llm_unavailable': "Photo analysis is unavailable right now: check the Anthropic API key, or try again in a moment if the service is busy or unreachable.",
   'editor.error_photo_unrecognised': "No track could be recognised in that photo. Try a clearer, more top-down picture.",
   'editor.error_image_too_large': "That photo is too large even after shrinking it.",
   'editor.error_invalid_image': "That file is not a usable image (use JPEG, PNG or WebP).",

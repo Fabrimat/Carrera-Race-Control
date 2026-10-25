@@ -20,7 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.api.routes import router
-from app.api.security import CSRFMiddleware, normalise_origins
+from app.api.security import BodyLimitMiddleware, CSRFMiddleware, normalise_origins
 from app.config import REPO_ROOT, AppConfig
 from app.race.store import RaceStore
 from app.service import ControllerError, RaceController
@@ -68,6 +68,7 @@ def create_app(
     )
     app.add_middleware(CSRFMiddleware, allowed_origins=allowed_origins)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=cfg.allowed_host_list)
+    app.add_middleware(BodyLimitMiddleware)  # outermost: oversized bodies never get further
 
     @app.exception_handler(ControllerError)
     async def controller_error(request: Request, exc: ControllerError) -> JSONResponse:
@@ -76,7 +77,13 @@ def create_app(
     @app.exception_handler(RequestValidationError)
     async def validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
         return JSONResponse(
-            {"detail": jsonable_encoder(exc.errors()), "code": "invalid_request"},
+            {
+                # Never echo the offending input back (it can be a ~10 MB photo).
+                "detail": jsonable_encoder(
+                    [{k: v for k, v in e.items() if k != "input"} for e in exc.errors()]
+                ),
+                "code": "invalid_request",
+            },
             status_code=422,
         )
 

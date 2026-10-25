@@ -20,11 +20,12 @@ from app.race.models import (
     RaceConfig,
     RaceState,
     Settings,
+    TrackLayout,
     TrackRecordInfo,
     utcnow,
 )
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 # Version 1 baseline (also what a fresh database starts from before migrating).
 _SCHEMA = """
@@ -72,6 +73,15 @@ _MIGRATIONS: dict[int, tuple[str, ...]] = {
             holder_name TEXT NOT NULL,
             race_id INTEGER,
             set_at TEXT NOT NULL
+        )
+        """,
+    ),
+    3: (
+        """
+        CREATE TABLE IF NOT EXISTS track_layouts (
+            name TEXT PRIMARY KEY,
+            json TEXT NOT NULL,
+            updated_at TEXT NOT NULL
         )
         """,
     ),
@@ -272,6 +282,37 @@ class RaceStore:
         """Remove a layout's record; False when there was none."""
         with self._lock, self._conn:
             cursor = self._conn.execute("DELETE FROM track_records WHERE layout = ?", (layout,))
+        return cursor.rowcount > 0
+
+    # ------------------------------------------------------------------ track layouts
+
+    def get_layout(self, name: str) -> TrackLayout | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT json FROM track_layouts WHERE name = ?", (name,)
+            ).fetchone()
+        return TrackLayout.model_validate_json(row["json"]) if row is not None else None
+
+    def list_layouts(self) -> list[TrackLayout]:
+        """All saved layouts, sorted by name."""
+        with self._lock:
+            rows = self._conn.execute("SELECT json FROM track_layouts ORDER BY name").fetchall()
+        return [TrackLayout.model_validate_json(row["json"]) for row in rows]
+
+    def save_layout(self, layout: TrackLayout) -> TrackLayout:
+        """Insert or replace a layout; ``updated_at`` is stamped now."""
+        saved = layout.model_copy(update={"updated_at": utcnow()})
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO track_layouts (name, json, updated_at) VALUES (?, ?, ?)",
+                (saved.name, saved.model_dump_json(), saved.updated_at.isoformat()),
+            )
+        return saved
+
+    def delete_layout(self, name: str) -> bool:
+        """Remove a layout; False when there was none."""
+        with self._lock, self._conn:
+            cursor = self._conn.execute("DELETE FROM track_layouts WHERE name = ?", (name,))
         return cursor.rowcount > 0
 
     # ------------------------------------------------------------------ counters

@@ -13,14 +13,18 @@ import pytest
 from app.api.ws import WsHub
 from app.commentary.llm import TemplateWriter
 from app.config import AppConfig
+from app.race.engine import RaceEngine
 from app.race.models import (
     CarConfig,
+    LayoutSensor,
     RaceConfig,
     RaceMode,
     RacePhase,
     Settings,
+    TrackLayout,
     TrackRecord,
     TrackRecordInfo,
+    TrackSettings,
 )
 from app.race.store import RaceStore
 from app.service import ControllerError, RaceController, ScaledClock
@@ -983,3 +987,166 @@ def test_writer_depends_on_the_anthropic_key(tmp_path: Path) -> None:
     config = make_config(tmp_path, anthropic_api_key="k")
     ctl = RaceController(config, RaceStore(":memory:"), tts=tts)
     assert isinstance(ctl.director._writer, AnthropicWriter)
+
+
+# --------------------------------------------------------------------------- track layouts
+
+
+def _layout(name: str = "default", *sensors: tuple[int, float]) -> TrackLayout:
+    points = [(0.1 + 0.1 * i, 0.5 + (0.3 if i % 2 else 0.0)) for i in range(8)]
+    return TrackLayout(
+        name=name,
+        points=points,
+        sensors=[LayoutSensor(sensor=n, s=s) for n, s in sensors],
+    )
+
+
+async def test_race_state_carries_layout_name_and_live_positions(tmp_path: Path) -> None:
+    store = RaceStore(":memory:")
+    store.save_layout(_layout())
+    script: list[Any] = [status(s) for s in (1, 2, 3, 4, 5, 6, 7, 0)]
+    script += [Timer(0, 1000), Timer(0, 7000)]
+    ctl = make_controller(tmp_path, FakeTrack(script), store=store)
+
+    async def body() -> None:
+        await ctl.connect("simulator", None, persist=False)
+        await wait_for(lambda: len(ctl.engine.laps) == 1)
+        state = ctl.race_state()
+        assert state.layout == "default"
+        pos = state.cars[0].track_pos
+        assert pos is not None
+        assert (pos.from_sensor, pos.to_sensor) == (1, 1)
+
+    await running(ctl, body)
+
+
+async def test_no_map_means_no_positions(tmp_path: Path) -> None:
+    script: list[Any] = [status(s) for s in (1, 2, 3, 4, 5, 6, 7, 0)]
+    script += [Timer(0, 1000), Timer(0, 7000)]
+    ctl = make_controller(tmp_path, FakeTrack(script))
+
+    async def body() -> None:
+        await ctl.connect("simulator", None, persist=False)
+        await wait_for(lambda: len(ctl.engine.laps) == 1)
+        state = ctl.race_state()
+        assert state.layout == "default"
+        assert all(car.track_pos is None for car in state.cars)
+
+    await running(ctl, body)
+
+
+def _spy_declared(ctl: RaceController) -> list[list[int]]:
+    calls: list[list[int]] = []
+    ctl.engine.set_declared_sensors = calls.append  # type: ignore[method-assign]
+    return calls
+
+
+def test_declared_sensors_follow_the_layout_sorted_by_s(tmp_path: Path) -> None:
+    store = RaceStore(":memory:")
+    store.save_layout(_layout("default", (3, 0.3), (2, 0.6)))
+    ctl = make_controller(tmp_path, store=store)
+    assert ctl._layout is not None and ctl.engine.state.num_sectors >= 1
+    calls = _spy_declared(ctl)
+
+    ctl.save_layout(_layout("default", (2, 0.2), (3, 0.7)))
+    assert calls[-1] == [2, 3]
+    ctl.save_layout(_layout("other", (3, 0.5)))  # not the current layout: no change
+    assert calls == [[2, 3]]
+    ctl.update_settings(ctl.settings.model_copy(update={"track": TrackSettings(layout="other")}))
+    assert calls[-1] == [3]
+    ctl.delete_layout("other")
+    assert calls[-1] == []
+
+
+def test_declared_sensors_are_sent_at_startup(tmp_path: Path) -> None:
+    store = RaceStore(":memory:")
+    store.save_layout(_layout("default", (3, 0.3), (2, 0.6)))
+    seen: list[list[int]] = []
+    original = RaceEngine.set_declared_sensors
+    RaceEngine.set_declared_sensors = lambda self, sensors: (  # type: ignore[method-assign]
+        seen.append(list(sensors)),
+        original(self, sensors),
+    )[1]
+    try:
+        make_controller(tmp_path, store=store)
+    finally:
+        RaceEngine.set_declared_sensors = original  # type: ignore[method-assign]
+    assert seen == [[3, 2]]
+
+
+def test_layout_crud_errors(tmp_path: Path) -> None:
+    ctl = make_controller(tmp_path)
+    with pytest.raises(ControllerError) as info:
+        ctl.get_layout("nope")
+    assert (info.value.status, info.value.code) == (404, "layout_not_found")
+    with pytest.raises(ControllerError) as info:
+        ctl.delete_layout("nope")
+    assert info.value.code == "layout_not_found"
+
+
+class _SimWithLanes:
+    def __init__(self, num_cars: int, time_scale: float, check_lanes: list[float] = ()) -> None:  # type: ignore[assignment]
+        self.check_lanes = list(check_lanes)
+
+
+class _SimWithoutLanes:
+    def __init__(self, num_cars: int, time_scale: float) -> None:
+        self.check_lanes: list[float] = []
+
+
+def test_simulator_gets_check_lanes_from_env_then_layout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import app.track.simulator as simulator
+
+    monkeypatch.setattr(simulator, "SimulatorTrack", _SimWithLanes)
+    store = RaceStore(":memory:")
+    ctl = make_controller(
+        tmp_path, store=store, config=make_config(tmp_path, sim_check_lanes="0.33, 0.66")
+    )
+    assert ctl._default_track("simulator", None).check_lanes == [0.33, 0.66]  # type: ignore[attr-defined]
+    ctl.save_layout(_layout("default", (3, 0.7), (2, 0.2)))
+    assert ctl._default_track("simulator", None).check_lanes == [0.2, 0.7]  # type: ignore[attr-defined]
+    ctl.delete_layout("default")
+    assert ctl._default_track("simulator", None).check_lanes == [0.33, 0.66]  # type: ignore[attr-defined]
+
+
+def test_simulator_without_check_lane_support_is_still_built(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import app.track.simulator as simulator
+
+    monkeypatch.setattr(simulator, "SimulatorTrack", _SimWithoutLanes)
+    ctl = make_controller(tmp_path, config=make_config(tmp_path, sim_check_lanes="0.5"))
+    assert isinstance(ctl._default_track("simulator", None), _SimWithoutLanes)
+
+
+def test_invalid_sim_check_lanes_are_rejected(tmp_path: Path) -> None:
+    for bad in ("0.3,0.5,0.7", "1.2", "0"):
+        with pytest.raises(ValueError):
+            make_config(tmp_path, sim_check_lanes=bad)
+
+
+async def test_second_concurrent_photo_conversion_gets_photo_busy(tmp_path: Path) -> None:
+    from types import SimpleNamespace
+
+    from tests.test_vision import FakeMessages, b64, make_png, reply
+
+    release = asyncio.Event()
+
+    class Slow(FakeMessages):
+        async def create(self, **kwargs: Any) -> Any:
+            await release.wait()
+            return await super().create(**kwargs)
+
+    client = SimpleNamespace(messages=Slow(reply()))
+    ctl = make_controller(tmp_path, vision_client=client)
+    first = asyncio.create_task(ctl.layout_from_photo(b64(make_png()), "n", "en"))
+    await asyncio.sleep(0.05)
+    with pytest.raises(ControllerError) as info:
+        await ctl.layout_from_photo(b64(make_png()), "n", "en")
+    assert (info.value.status, info.value.code) == (429, "photo_busy")
+    release.set()
+    assert (await first).layout.source == "photo"
+    # The lock is free again afterwards.
+    assert (await ctl.layout_from_photo(b64(make_png()), "n", "en")).layout.name == "n"

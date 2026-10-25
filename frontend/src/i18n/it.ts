@@ -34,6 +34,8 @@ export const it: Messages = {
   'error.forbidden_origin': "Richiesta rifiutata: non proviene da questa app.",
   'error.invalid_request': 'Richiesta non valida.',
   'error.record_not_found': 'Nessun record trovato per questo tracciato.',
+  'error.layout_invalid': 'Il disegno della pista non è valido: controlla il tracciato e che i sensori non siano troppo vicini.',
+  'error.photo_busy': "Un'altra foto è in analisi: attendi un momento e riprova.",
 
   'connError.busy':
     "La Control Unit è occupata. Chiudi l'app Carrera sul telefono: la centralina accetta una sola connessione Bluetooth alla volta.",
@@ -292,7 +294,7 @@ export const it: Messages = {
   'editor.photo_loaded': "Bozza caricata sopra la foto. Correggi i punti sbagliati, poi salva.",
   'editor.photo_bg_remove': "Nascondi la foto",
   'editor.photo_bg_note': "La foto è solo uno sfondo: al salvataggio il disegno viene adattato al riquadro.",
-  'editor.error_llm_unavailable': "L'analisi delle foto non è disponibile: aggiungi una chiave API Anthropic nel backend.",
+  'editor.error_llm_unavailable': "L'analisi delle foto non è disponibile al momento: controlla la chiave API Anthropic, oppure riprova tra poco se il servizio è occupato o non raggiungibile.",
   'editor.error_photo_unrecognised': "Nessuna pista riconosciuta nella foto. Prova con una foto più nitida e più dall'alto.",
   'editor.error_image_too_large': "La foto è troppo grande anche dopo averla ridotta.",
   'editor.error_invalid_image': "Il file non è un'immagine utilizzabile (usa JPEG, PNG o WebP).",

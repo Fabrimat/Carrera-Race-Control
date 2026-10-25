@@ -31,12 +31,13 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import logging
 import time
 from collections import deque
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel
 
@@ -50,6 +51,7 @@ from app.race.models import (
     CarConfig,
     CommentaryLine,
     LapCompleted,
+    LayoutDraft,
     RaceConfig,
     RaceEvent,
     RaceFinished,
@@ -57,11 +59,13 @@ from app.race.models import (
     RaceStarted,
     RaceState,
     Settings,
+    TrackLayout,
     TrackRecord,
     TrackRecordInfo,
     TrackSettings,
     utcnow,
 )
+from app.race.position import estimate_positions
 from app.race.store import RaceStore
 from app.track.base import (
     Status,
@@ -118,6 +122,13 @@ ErrorCode = Literal[
     "race_not_found",
     "record_not_found",
     "audio_not_found",
+    "layout_not_found",
+    "llm_unavailable",
+    "photo_unrecognised",
+    "photo_busy",
+    "layout_invalid",
+    "image_too_large",
+    "invalid_image",
     "forbidden_origin",
     "invalid_request",
     # Track errors (TrackErrorCode) are passed through as they are:
@@ -196,6 +207,7 @@ class RaceController:
         track_factory: TrackFactory | None = None,
         tts: TTSClient | None = None,
         writer: LineWriter | None = None,
+        vision_client: Any | None = None,
         backoff: Sequence[float] = DEFAULT_BACKOFF,
         start_fallback_s: float = START_FALLBACK_S,
         second_press_s: float = START_SECOND_PRESS_S,
@@ -226,6 +238,10 @@ class RaceController:
 
         self.engine_clock = ScaledClock()
         self.engine = RaceEngine(self.settings.cars, self.settings.race, clock=self.engine_clock)
+        self._vision_client = vision_client
+        self._photo_lock = asyncio.Lock()  # one (costly) photo conversion at a time
+        self._layout: TrackLayout | None = None
+        self._refresh_layout()
 
         self.tts = tts if tts is not None else self._default_tts()
         self.budget = BudgetTracker(
@@ -302,13 +318,28 @@ class RaceController:
                 return ReplayTrack(self.config.replay_file, speed=1.0, loop=True)
             from app.track.simulator import SimulatorTrack
 
+            kwargs: dict[str, Any] = {}
+            lanes = self._simulated_check_lanes()
+            if lanes:
+                if "check_lanes" in inspect.signature(SimulatorTrack).parameters:
+                    kwargs["check_lanes"] = lanes
+                else:
+                    log.warning("this simulator has no Check Lane support, ignoring them")
             return SimulatorTrack(
-                num_cars=self.config.sim_cars, time_scale=self.config.sim_time_scale
+                num_cars=self.config.sim_cars, time_scale=self.config.sim_time_scale, **kwargs
             )
         from app.track.carrera import CarreraTrack
 
         assert address is not None
         return CarreraTrack(address, mode=mode)
+
+    def _simulated_check_lanes(self) -> list[float]:
+        """Lap fractions of the simulated Check Lanes (sensor-number order); the map wins."""
+        if self._layout is not None and self._layout.sensors:
+            # The simulator expects them in sensor-number order (index 0 = sensor 2); it
+            # cannot express "only sensor 3", so a lone sensor 3 is simulated as sensor 2.
+            return [s.s for s in sorted(self._layout.sensors, key=lambda s: s.sensor)]
+        return self.config.sim_check_lane_list
 
     def _clock_scale(self, mode: TrackMode) -> float:
         if mode == "simulator" and self.config.replay_file is None:
@@ -375,6 +406,11 @@ class RaceController:
         """Engine state plus the track record of the current layout."""
         state = self.engine.state
         state.track_record = self.track_record.model_copy() if self.track_record else None
+        state.layout = self.settings.track.layout
+        if self._layout is not None:
+            positions = estimate_positions(state, self._layout, state.race_time_ms)
+            for car in state.cars:
+                car.track_pos = positions.get(car.address)
         return state
 
     def snapshot_message(self) -> str:
@@ -818,7 +854,10 @@ class RaceController:
     # ------------------------------------------------------------------ settings
 
     def update_settings(self, settings: Settings) -> Settings:
+        layout_changed = settings.track.layout != self.settings.track.layout
         self.settings = settings
+        if layout_changed:
+            self._refresh_layout()
         if settings.track.layout != self._record_layout:
             self._record_layout = settings.track.layout
             self.track_record = self._load_record(self._record_layout)
@@ -832,6 +871,66 @@ class RaceController:
         self._save_settings()
         self._mark_dirty()
         return self.settings
+
+    # ------------------------------------------------------------------ track layouts
+
+    def _refresh_layout(self) -> None:
+        """Reload the current layout and tell the engine about its Check Lane order."""
+        try:
+            self._layout = self.store.get_layout(self.settings.track.layout)
+        except Exception:
+            log.exception("could not load the track layout")
+            self._layout = None
+        sensors = (
+            [s.sensor for s in sorted(self._layout.sensors, key=lambda s: s.s)]
+            if (self._layout is not None)
+            else []
+        )
+        self.engine.set_declared_sensors(sensors)
+
+    def list_layouts(self) -> list[TrackLayout]:
+        return self.store.list_layouts()
+
+    def get_layout(self, name: str) -> TrackLayout:
+        layout = self.store.get_layout(name)
+        if layout is None:
+            raise ControllerError(404, f"Layout {name!r} not found", "layout_not_found")
+        return layout
+
+    def save_layout(self, layout: TrackLayout) -> TrackLayout:
+        saved = self.store.save_layout(layout)
+        if saved.name == self.settings.track.layout:
+            self._refresh_layout()
+            self._mark_dirty()
+        return saved
+
+    def delete_layout(self, name: str) -> list[TrackLayout]:
+        if not self.store.delete_layout(name):
+            raise ControllerError(404, f"Layout {name!r} not found", "layout_not_found")
+        if name == self.settings.track.layout:
+            self._refresh_layout()
+            self._mark_dirty()
+        return self.store.list_layouts()
+
+    async def layout_from_photo(self, image_base64: str, name: str, language: str) -> LayoutDraft:
+        """Ask the vision model for a draft map. Nothing is saved and nothing is logged."""
+        from app.track.vision import VisionError, layout_from_photo
+
+        key = self.config.anthropic_api_key
+        if self._photo_lock.locked():
+            raise ControllerError(429, "Another photo is being analysed", "photo_busy")
+        async with self._photo_lock:
+            try:
+                return await layout_from_photo(
+                    api_key=key.get_secret_value() if key is not None else None,
+                    model=self.config.anthropic_vision_model,
+                    image_base64=image_base64,
+                    name=name,
+                    language=language,
+                    client=self._vision_client,
+                )
+            except VisionError as exc:
+                raise ControllerError(exc.status, exc.detail, exc.code) from exc
 
     def _save_settings(self) -> None:
         try:

@@ -10,13 +10,18 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 REPO_ROOT = BACKEND_DIR.parent
 
 TrackMode = Literal["simulator", "ble", "serial"]
+
+
+def parse_check_lanes(value: str) -> list[float]:
+    """ "0.33, 0.66" -> [0.33, 0.66]; empty -> []."""
+    return [float(part) for part in value.split(",") if part.strip()]
 
 
 class AppConfig(BaseSettings):
@@ -32,6 +37,8 @@ class AppConfig(BaseSettings):
     elevenlabs_model_id: str | None = None  # None -> the TTS client's default (Flash v2.5)
     anthropic_api_key: SecretStr | None = None
     anthropic_model: str = "claude-haiku-5-5"
+    # Vision model that turns a photo of the track into a map (POST /api/layouts/from-photo).
+    anthropic_vision_model: str = "claude-opus-5-5"
 
     track_mode: TrackMode = "simulator"
     track_address: str | None = None
@@ -40,6 +47,9 @@ class AppConfig(BaseSettings):
     data_dir: Path = BACKEND_DIR / "data"  # SQLite file + TTS cache
     sim_cars: int = Field(default=4, ge=1, le=6)
     sim_time_scale: float = Field(default=1.0, gt=0)
+    # Comma-separated lap fractions of the simulated Check Lanes (sensors 2, 3), e.g.
+    # "0.33,0.66". Empty = no Check Lanes. A saved layout with sensors overrides it.
+    sim_check_lanes: str = ""
     # Optional: in "simulator" mode replay this recorded JSONL session instead (loops).
     replay_file: Path | None = None
 
@@ -47,6 +57,18 @@ class AppConfig(BaseSettings):
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
     # Comma-separated Host names accepted (DNS-rebinding guard); ports are ignored.
     allowed_hosts: str = "127.0.0.1,localhost"
+
+    @field_validator("sim_check_lanes")
+    @classmethod
+    def _check_lane_fractions(cls, value: str) -> str:
+        fractions = parse_check_lanes(value)
+        if len(fractions) > 2 or any(not 0 < f < 1 for f in fractions):
+            raise ValueError("SIM_CHECK_LANES: up to two fractions strictly between 0 and 1")
+        return value
+
+    @property
+    def sim_check_lane_list(self) -> list[float]:
+        return parse_check_lanes(self.sim_check_lanes)  # sensor-number order: 2, then 3
 
     @property
     def db_path(self) -> Path:

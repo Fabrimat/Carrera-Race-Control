@@ -2,18 +2,19 @@
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import asdict
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Body, Query, Request, WebSocket
 from fastapi.responses import Response, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.api.security import origin_allowed
 from app.config import TrackMode
 from app.race.export import race_to_csv, race_to_json
-from app.race.models import RaceConfig, RaceState, Settings
+from app.race.models import LayoutDraft, RaceConfig, RaceState, Settings, TrackLayout
 from app.service import ConnectionInfo, ControllerError, RaceController, Snapshot
 
 router = APIRouter()
@@ -26,6 +27,13 @@ class ConnectRequest(BaseModel):
 
 class MuteRequest(BaseModel):
     muted: bool
+
+
+class PhotoRequest(BaseModel):
+    image_base64: str
+    media_type: Literal["image/jpeg", "image/png", "image/webp"]
+    name: Annotated[str, Field(min_length=1, max_length=40)]
+    language: Literal["en", "it"] = "en"
 
 
 class Keys(BaseModel):
@@ -140,6 +148,65 @@ async def put_settings(request: Request, settings: Settings) -> SettingsResponse
     ctl = controller(request)
     ctl.update_settings(settings)
     return _settings_response(ctl)
+
+
+# --------------------------------------------------------------------------- track layouts
+
+MIN_PATH_LENGTH = 0.5  # normalised units; shorter is not a track
+MIN_SENSOR_GAP = 0.01  # fraction of the lap between sensors and the line
+
+
+def layout_errors(layout: TrackLayout) -> list[str]:
+    """Geometry checks on top of the model (models.py is the wire contract, kept as is)."""
+    errors: list[str] = []
+    points = layout.points
+    if any(not (0 <= x <= 1 and 0 <= y <= 1) for x, y in points):
+        errors.append("Points must lie inside the 0..1 square")
+    count = len(points)
+    if any(math.dist(points[i], points[(i + 1) % count]) < 1e-9 for i in range(count)):
+        errors.append("Consecutive points must be distinct")
+    length = sum(math.dist(points[i], points[(i + 1) % count]) for i in range(count))
+    if length <= MIN_PATH_LENGTH:
+        errors.append(f"The path is too short (total length must exceed {MIN_PATH_LENGTH})")
+    numbers = [s.sensor for s in layout.sensors]
+    if len(set(numbers)) != len(numbers):
+        errors.append("Sensor numbers must be distinct")
+    positions = sorted(s.s for s in layout.sensors)
+    if positions and (positions[0] < MIN_SENSOR_GAP or positions[-1] > 1 - MIN_SENSOR_GAP):
+        errors.append(f"Sensors must be at least {MIN_SENSOR_GAP} of the lap away from the line")
+    if any(b - a < MIN_SENSOR_GAP for a, b in zip(positions, positions[1:], strict=False)):
+        errors.append(f"Sensors must be at least {MIN_SENSOR_GAP} of the lap apart")
+    return errors
+
+
+@router.get("/api/layouts")
+async def list_layouts(request: Request) -> dict[str, Any]:
+    return {"layouts": controller(request).list_layouts()}
+
+
+@router.post("/api/layouts/from-photo", response_model=LayoutDraft)
+async def layout_from_photo(request: Request, body: PhotoRequest) -> LayoutDraft:
+    return await controller(request).layout_from_photo(body.image_base64, body.name, body.language)
+
+
+@router.get("/api/layouts/{name}", response_model=TrackLayout)
+async def get_layout(request: Request, name: str) -> TrackLayout:
+    return controller(request).get_layout(name)
+
+
+@router.put("/api/layouts/{name}", response_model=TrackLayout)
+async def put_layout(request: Request, name: str, layout: TrackLayout) -> TrackLayout:
+    errors = layout_errors(layout)
+    if layout.name != name:
+        errors.insert(0, "The layout name must match the URL")
+    if errors:
+        raise ControllerError(422, "; ".join(errors), "layout_invalid")
+    return controller(request).save_layout(layout)
+
+
+@router.delete("/api/layouts/{name}")
+async def delete_layout(request: Request, name: str) -> dict[str, Any]:
+    return {"layouts": controller(request).delete_layout(name)}
 
 
 # --------------------------------------------------------------------------- history

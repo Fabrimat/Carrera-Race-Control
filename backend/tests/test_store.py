@@ -14,6 +14,7 @@ from app.race.models import (
     RacePhase,
     RaceState,
     Settings,
+    TrackLayout,
     TrackRecordInfo,
     Verbosity,
 )
@@ -243,7 +244,7 @@ def test_v1_database_upgrades_in_place(tmp_path: Path) -> None:
         store.close()
 
     conn = sqlite3.connect(path)
-    assert conn.execute("SELECT version FROM schema_version").fetchall() == [(2,)]
+    assert conn.execute("SELECT version FROM schema_version").fetchall() == [(3,)]
     conn.close()
     # Reopening an already upgraded database is a no-op.
     reopened = RaceStore(path)
@@ -289,3 +290,56 @@ def test_record_layout_is_a_parameter_not_sql(store: RaceStore) -> None:
     assert store.get_record(evil) is not None
     assert store.delete_record(evil) is True
     assert store.list_records() == []
+
+
+def _layout(name: str = "main") -> TrackLayout:
+    points = [(0.1 + 0.1 * i, 0.5 + (0.3 if i % 2 else 0.0)) for i in range(8)]
+    return TrackLayout(name=name, points=points, aspect=1.5)
+
+
+def test_layout_crud(store: RaceStore) -> None:
+    assert store.get_layout("main") is None
+    assert store.delete_layout("main") is False
+    store.save_layout(_layout("zeta"))
+    saved = store.save_layout(_layout("main"))
+    assert store.get_layout("main") == saved
+    assert [item.name for item in store.list_layouts()] == ["main", "zeta"]
+    replaced = store.save_layout(_layout("main").model_copy(update={"aspect": 2.0}))
+    assert store.get_layout("main").aspect == 2.0  # type: ignore[union-attr]
+    assert replaced.updated_at >= saved.updated_at
+    assert store.delete_layout("main") is True
+    assert store.get_layout("main") is None
+
+
+def test_v2_database_upgrades_to_layouts_idempotently(tmp_path: Path) -> None:
+    path = tmp_path / "v2.db"
+    _make_v1_db(path)
+    conn = sqlite3.connect(path)
+    conn.execute(
+        "CREATE TABLE track_records (layout TEXT PRIMARY KEY, lap_ms INTEGER NOT NULL, "
+        "address INTEGER NOT NULL, holder_name TEXT NOT NULL, race_id INTEGER, "
+        "set_at TEXT NOT NULL)"
+    )
+    conn.execute("UPDATE schema_version SET version = 2")
+    conn.commit()
+    conn.close()
+
+    store = RaceStore(path)
+    try:
+        assert store.list_layouts() == []
+        store.save_layout(_layout())
+    finally:
+        store.close()
+    # The migration step also tolerates an already existing table (idempotent).
+    conn = sqlite3.connect(path)
+    conn.execute("UPDATE schema_version SET version = 2")
+    conn.commit()
+    conn.close()
+    reopened = RaceStore(path)
+    try:
+        assert [item.name for item in reopened.list_layouts()] == ["main"]
+    finally:
+        reopened.close()
+    conn = sqlite3.connect(path)
+    assert conn.execute("SELECT version FROM schema_version").fetchall() == [(3,)]
+    conn.close()

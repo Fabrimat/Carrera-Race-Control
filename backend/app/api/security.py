@@ -5,6 +5,8 @@
   ``Sec-Fetch-Site: cross-site``). Requests without ``Origin`` (curl, scripts, tests) pass.
 * **Cross-site WebSocket hijacking**: ``/ws`` refuses handshakes whose ``Origin`` is not
   allowed (see :func:`origin_allowed`, used by the route).
+* **Body size**: :class:`BodyLimitMiddleware` answers 413 to bodies above 1 MB (12 MB for
+  the photo upload), by ``Content-Length`` and while streaming chunked bodies.
 * **DNS rebinding**: ``TrustedHostMiddleware`` (wired in ``main.py``) only accepts the
   configured ``Host`` names.
 
@@ -20,7 +22,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 
-from starlette.types import ASGIApp, Receive, Scope, Send
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
@@ -66,6 +68,83 @@ async def _forbidden(send: Send) -> None:
         {
             "type": "http.response.start",
             "status": 403,
+            "headers": [
+                (b"content-type", b"application/json"),
+                (b"content-length", str(len(body)).encode()),
+            ],
+        }
+    )
+    await send({"type": "http.response.body", "body": body})
+
+
+DEFAULT_BODY_LIMIT = 1024 * 1024
+PHOTO_PATH = "/api/layouts/from-photo"
+PHOTO_BODY_LIMIT = 12 * 1024 * 1024  # base64 of 8 MB is ~10.7 MB, plus the JSON wrapper
+
+
+class _BodyTooLarge(Exception):
+    pass
+
+
+class BodyLimitMiddleware:
+    """Pure ASGI request-body cap. Chunked bodies are counted while they stream."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        is_photo = scope["path"] == PHOTO_PATH
+        limit = PHOTO_BODY_LIMIT if is_photo else DEFAULT_BODY_LIMIT
+        for key, value in scope["headers"]:
+            if key == b"content-length":
+                try:
+                    declared = int(value)
+                except ValueError:
+                    declared = 0
+                if declared > limit:
+                    await _too_large(send, is_photo)
+                    return
+        received = 0
+        exceeded = False
+
+        async def counting_receive() -> Message:
+            nonlocal received, exceeded
+            message = await receive()
+            if message["type"] == "http.request":
+                received += len(message.get("body", b""))
+                if received > limit:
+                    exceeded = True
+                    raise _BodyTooLarge
+            return message
+
+        async def guarded_send(message: Message) -> None:
+            # Once the cap is hit, whatever the app answers (FastAPI turns the aborted body
+            # read into a 400) is dropped: the client gets the 413 below.
+            if not exceeded:
+                await send(message)
+
+        try:
+            await self.app(scope, counting_receive, guarded_send)
+        except _BodyTooLarge:
+            pass
+        if exceeded:
+            await _too_large(send, is_photo)
+
+
+async def _too_large(send: Send, is_photo: bool) -> None:
+    body = json.dumps(
+        {
+            "detail": "Request body too large",
+            "code": "image_too_large" if is_photo else "invalid_request",
+        }
+    ).encode()
+    await send(
+        {
+            "type": "http.response.start",
+            "status": 413,
             "headers": [
                 (b"content-type", b"application/json"),
                 (b"content-length", str(len(body)).encode()),
