@@ -20,6 +20,7 @@ which is in the default list.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Mapping
 
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
@@ -80,6 +81,21 @@ async def _forbidden(send: Send) -> None:
 DEFAULT_BODY_LIMIT = 1024 * 1024
 PHOTO_PATH = "/api/layouts/from-photo"
 PHOTO_BODY_LIMIT = 12 * 1024 * 1024  # base64 of 8 MB is ~10.7 MB, plus the JSON wrapper
+# Driver photos and spoken names are at most 2 MB decoded (~2.8 MB of base64 in JSON).
+DRIVER_MEDIA_LIMIT = 3 * 1024 * 1024
+TRANSCRIBE_PATH = "/api/event/transcribe"
+_DRIVER_PHOTO_RE = re.compile(r"^/api/drivers/[^/]+/photo$")
+
+
+def _body_rule(path: str) -> tuple[int, bool]:
+    """(byte cap, whether an oversized body is an image) for a request path."""
+    if path == PHOTO_PATH:
+        return PHOTO_BODY_LIMIT, True
+    if _DRIVER_PHOTO_RE.match(path):
+        return DRIVER_MEDIA_LIMIT, True
+    if path == TRANSCRIBE_PATH:
+        return DRIVER_MEDIA_LIMIT, False
+    return DEFAULT_BODY_LIMIT, False
 
 
 class _BodyTooLarge(Exception):
@@ -96,8 +112,7 @@ class BodyLimitMiddleware:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
-        is_photo = scope["path"] == PHOTO_PATH
-        limit = PHOTO_BODY_LIMIT if is_photo else DEFAULT_BODY_LIMIT
+        limit, is_photo = _body_rule(scope["path"])
         for key, value in scope["headers"]:
             if key == b"content-length":
                 try:

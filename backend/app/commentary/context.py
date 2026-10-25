@@ -15,6 +15,7 @@ from app.race.models import (
     BestLap,
     CarConfig,
     CarState,
+    DriverAssigned,
     LapCompleted,
     PositionChange,
     RaceEvent,
@@ -77,7 +78,9 @@ def summarise_event(event: RaceEvent, cars: dict[int, CarConfig], lang: str) -> 
     address = getattr(event, "address", None)
     if address is not None:
         summary["driver"] = _name(address, cars)
-    if isinstance(event, LapCompleted):
+    if isinstance(event, DriverAssigned):
+        summary["driver"] = event.driver_name
+    elif isinstance(event, LapCompleted):
         summary["lap"] = event.lap_number
         summary["lap_time"] = speech.say_lap_time(event.lap_ms, lang)
     elif isinstance(event, BestLap):

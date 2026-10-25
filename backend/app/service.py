@@ -33,23 +33,36 @@ import asyncio
 import contextlib
 import inspect
 import logging
+import re
 import time
+import unicodedata
 from collections import deque
 from collections.abc import Awaitable, Callable, Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
 from pydantic import BaseModel
 
 from app.api.ws import WsHub, encode
+from app.avatars import AvatarStore
 from app.commentary.director import CommentaryDirector
 from app.commentary.llm import AnthropicWriter, LineWriter, OpenAIWriter, TemplateWriter
+from app.commentary.stt import (
+    ElevenLabsTranscriber,
+    OpenAITranscriber,
+    Transcriber,
+    TranscriptionError,
+    guess_driver,
+)
 from app.commentary.tts import DEFAULT_MODEL_ID, BudgetTracker, ElevenLabsTTS, TTSClient
 from app.config import AppConfig, TrackMode
 from app.race.engine import RaceEngine
 from app.race.models import (
     CarConfig,
     CommentaryLine,
+    Driver,
+    DriverAssigned,
+    EventState,
     LapCompleted,
     LayoutDraft,
     RaceConfig,
@@ -86,6 +99,7 @@ START_FALLBACK_S = 5.0
 START_SECOND_PRESS_S = 2.5
 CLOSE_TIMEOUT_S = 5.0
 COMMENTARY_HISTORY = 50
+ARM_TIMEOUT_S = 60  # "assign on next crossing" stays armed this long
 SEEDED_COUNTER = "settings:seeded"
 FALLBACK_NOTES = {
     "en": "OpenAI is selected but has no API key: this photo was read by Anthropic.",
@@ -135,6 +149,7 @@ ErrorCode = Literal[
     "invalid_image",
     "forbidden_origin",
     "invalid_request",
+    "transcription_failed",
     # Track errors (TrackErrorCode) are passed through as they are:
     "busy",
     "not_found",
@@ -227,6 +242,7 @@ class RaceController:
         tts: TTSClient | None = None,
         writer: LineWriter | None = None,
         vision_client: Any | None = None,
+        transcriber: Transcriber | None = None,
         backoff: Sequence[float] = DEFAULT_BACKOFF,
         start_fallback_s: float = START_FALLBACK_S,
         second_press_s: float = START_SECOND_PRESS_S,
@@ -282,6 +298,13 @@ class RaceController:
             on_line=self._on_line,
             on_stop=self._on_stop,
         )
+
+        # Event mode: drivers, assignments and "assign on next crossing".
+        self.avatars = AvatarStore(config.avatars_dir)
+        self._transcriber = transcriber
+        self._wall_clock: Callable[[], datetime] = utcnow
+        self._drivers_cache: dict[str, Driver] | None = None
+        self._event_state = self._load_event_state()
 
         self._track: TrackInterface | None = None
         self._poll_task: asyncio.Task[None] | None = None
@@ -463,6 +486,7 @@ class RaceController:
             positions = estimate_positions(state, self._layout, state.race_time_ms)
             for car in state.cars:
                 car.track_pos = positions.get(car.address)
+        self._fill_drivers(state)
         return state
 
     def snapshot_message(self) -> str:
@@ -649,6 +673,7 @@ class RaceController:
     async def _handle(self, msg: Timer | Status) -> None:
         before = self.engine.phase
         events = self.engine.handle(msg)
+        events.extend(self._crossing_assignment(msg, before))
         after = self.engine.phase
         if before in (RacePhase.IDLE, RacePhase.FINISHED) and after in _ACTIVE:
             # Physical START on the CU: the engine auto-prepared, record the race.
@@ -1010,3 +1035,252 @@ class RaceController:
 
     def cars_by_address(self) -> dict[int, CarConfig]:
         return {c.address: c for c in self.settings.cars}
+
+    # ------------------------------------------------------------------ event mode: drivers
+    # Drivers roster, assignments (address -> driver id) and "assign on next crossing".
+    # EventState is one persisted row shared with the session runner: always go through
+    # `_update_event_state`.
+
+    def _load_event_state(self) -> EventState:
+        try:
+            state = self.store.load_event_state()
+        except Exception:
+            log.exception("could not load the event state")
+            return EventState()
+        if state.armed_until is not None and state.armed_until <= self._wall_clock():
+            state.armed_driver_id = None
+            state.armed_until = None
+        return state
+
+    @property
+    def event_state(self) -> EventState:
+        return self._event_state
+
+    def _update_event_state(self, fn: Callable[[EventState], None]) -> EventState:
+        """Apply ``fn`` to the event state (in place), persist it and refresh the UI."""
+        fn(self._event_state)
+        try:
+            self.store.save_event_state(self._event_state)
+        except Exception:
+            log.exception("could not save the event state")
+        self._mark_dirty()
+        return self._event_state
+
+    def _driver_map(self) -> dict[str, Driver]:
+        if self._drivers_cache is None:
+            self._drivers_cache = {d.id: d for d in self.store.list_drivers()}
+        return self._drivers_cache
+
+    def _fill_drivers(self, state: RaceState) -> None:
+        """Copy the assignments into the cars of a published state."""
+        assignments = self._event_state.assignments
+        if not assignments:
+            return
+        drivers = self._driver_map()
+        for car in state.cars:
+            driver = drivers.get(assignments.get(car.address, ""))
+            if driver is not None:
+                car.driver_id = driver.id
+                car.driver_name = driver.nickname or driver.name
+
+    def list_drivers(self) -> list[Driver]:
+        return self.store.list_drivers()
+
+    def get_driver(self, driver_id: str) -> Driver:
+        driver = self._driver_map().get(driver_id)
+        if driver is None:
+            raise ControllerError(404, f"Driver {driver_id!r} not found", "not_found")
+        return driver
+
+    def _unique_driver_id(self, name: str) -> str:
+        folded = unicodedata.normalize("NFKD", name.casefold())
+        ascii_name = folded.encode("ascii", "ignore").decode()
+        slug = re.sub(r"[^a-z0-9]+", "-", ascii_name).strip("-")[:32].strip("-") or "driver"
+        taken = self._driver_map()
+        candidate, n = slug, 1
+        while candidate in taken:
+            n += 1
+            candidate = f"{slug}-{n}"
+        return candidate
+
+    def _save_driver(self, driver: Driver) -> Driver:
+        saved = self.store.save_driver(driver)
+        self._drivers_cache = None
+        self._mark_dirty()
+        return saved
+
+    def create_driver(self, name: str, nickname: str | None, bio: str) -> Driver:
+        driver = Driver(
+            id=self._unique_driver_id(name), name=name, nickname=nickname or None, bio=bio
+        )
+        return self._save_driver(driver)
+
+    def update_driver(self, driver_id: str, new: Driver) -> Driver:
+        """Replace name, nickname and bio. The id, photo flag and creation time are the
+        server's: whatever the body says about them is ignored."""
+        current = self.get_driver(driver_id)
+        return self._save_driver(
+            current.model_copy(
+                update={"name": new.name, "nickname": new.nickname or None, "bio": new.bio}
+            )
+        )
+
+    def delete_driver(self, driver_id: str) -> list[Driver]:
+        self.get_driver(driver_id)
+        self.avatars.delete(driver_id)
+        self.store.delete_driver(driver_id)
+        self._drivers_cache = None
+
+        def drop(state: EventState) -> None:
+            state.assignments = {a: d for a, d in state.assignments.items() if d != driver_id}
+            if state.armed_driver_id == driver_id:
+                state.armed_driver_id = None
+                state.armed_until = None
+
+        self._update_event_state(drop)
+        return self.store.list_drivers()
+
+    def set_driver_photo(self, driver_id: str, data: bytes, ext: str) -> Driver:
+        driver = self.get_driver(driver_id)
+        try:
+            self.avatars.save(driver_id, data, ext)
+        except OSError as exc:
+            log.exception("could not store the photo of driver %s", driver_id)
+            raise ControllerError(500, "Could not store the photo", "unknown") from exc
+        return self._save_driver(driver.model_copy(update={"has_photo": True}))
+
+    def delete_driver_photo(self, driver_id: str) -> Driver:
+        driver = self.get_driver(driver_id)
+        self.avatars.delete(driver_id)
+        return self._save_driver(driver.model_copy(update={"has_photo": False}))
+
+    # ------------------------------------------------------------------ event mode: assignments
+
+    def assignments(self) -> dict[int, str]:
+        return dict(self._event_state.assignments)
+
+    async def set_assignments(self, changes: dict[int, str | None]) -> dict[int, str]:
+        """Manual assignment: a driver id sets, ``None`` clears; other addresses are kept."""
+        drivers = self._driver_map()
+        for address, driver_id in changes.items():
+            if not 0 <= address <= 5:
+                raise ControllerError(
+                    422, f"Address {address} is not a controller", "invalid_request"
+                )
+            if driver_id is not None and driver_id not in drivers:
+                raise ControllerError(422, f"Unknown driver {driver_id!r}", "invalid_request")
+        events: list[RaceEvent] = []
+
+        def apply(state: EventState) -> None:
+            for address, driver_id in changes.items():
+                if driver_id is None:
+                    state.assignments.pop(address, None)
+                    continue
+                if state.assignments.get(address) != driver_id:
+                    driver = drivers[driver_id]
+                    events.append(
+                        DriverAssigned(
+                            address=address,
+                            driver_id=driver_id,
+                            driver_name=driver.nickname or driver.name,
+                            method="manual",
+                        )
+                    )
+                state.assignments[address] = driver_id
+
+        self._update_event_state(apply)
+        if events:
+            await self._process_events(events)
+        return self.assignments()
+
+    # ------------------------------------------------------------------ event mode: arming
+
+    def _armed_driver_id(self) -> str | None:
+        """The armed driver, or None when nobody is armed or the arming expired."""
+        state = self._event_state
+        if state.armed_driver_id is None:
+            return None
+        if state.armed_until is None or state.armed_until <= self._wall_clock():
+            self.disarm()
+            return None
+        return state.armed_driver_id
+
+    def arm(self, driver_id: str) -> None:
+        """The next car over the line gets this driver. Replaces any earlier arming."""
+        self.get_driver(driver_id)
+        if self.engine.phase in _ACTIVE:
+            raise ControllerError(409, "A race is in progress", "busy")
+        until = self._wall_clock() + timedelta(seconds=ARM_TIMEOUT_S)
+
+        def apply(state: EventState) -> None:
+            state.armed_driver_id = driver_id
+            state.armed_until = until
+
+        self._update_event_state(apply)
+
+    def disarm(self) -> None:
+        if self._event_state.armed_driver_id is None and self._event_state.armed_until is None:
+            return
+
+        def apply(state: EventState) -> None:
+            state.armed_driver_id = None
+            state.armed_until = None
+
+        self._update_event_state(apply)
+
+    def _crossing_assignment(self, msg: Timer | Status, phase: RacePhase) -> list[RaceEvent]:
+        """A start/finish crossing while no race is on gives the armed driver to that car."""
+        if (
+            not isinstance(msg, Timer)
+            or msg.sector != 1
+            or phase not in (RacePhase.IDLE, RacePhase.FINISHED)
+            or not 0 <= msg.address <= 5
+        ):
+            return []
+        driver_id = self._armed_driver_id()
+        driver = self._driver_map().get(driver_id) if driver_id is not None else None
+        if driver is None:
+            return []
+        address = msg.address
+
+        def apply(state: EventState) -> None:
+            # A driver sits in one car only: the arming moves them.
+            state.assignments = {a: d for a, d in state.assignments.items() if d != driver.id}
+            state.assignments[address] = driver.id
+            state.armed_driver_id = None
+            state.armed_until = None
+
+        self._update_event_state(apply)
+        return [
+            DriverAssigned(
+                address=address,
+                driver_id=driver.id,
+                driver_name=driver.nickname or driver.name,
+                method="crossing",
+            )
+        ]
+
+    # ------------------------------------------------------------------ event mode: voice
+
+    def _build_transcriber(self) -> Transcriber:
+        if self._transcriber is not None:
+            return self._transcriber
+        cfg = self.config
+        if self.settings.commentary.llm_provider == "openai" and cfg.has_openai_key():
+            assert cfg.openai_api_key is not None
+            return OpenAITranscriber(cfg.openai_api_key.get_secret_value())
+        if cfg.has_elevenlabs_key():
+            assert cfg.elevenlabs_api_key is not None
+            return ElevenLabsTranscriber(cfg.elevenlabs_api_key.get_secret_value())
+        raise ControllerError(503, "No speech-to-text API key is configured", "llm_unavailable")
+
+    async def transcribe(self, audio: bytes, media_type: str, language: str) -> dict[str, Any]:
+        """Speech to text, plus the roster driver the text most likely names."""
+        transcriber = self._build_transcriber()
+        try:
+            text = await transcriber.transcribe(audio, media_type, language)
+        except TranscriptionError as exc:
+            raise ControllerError(exc.status, exc.detail, exc.code) from exc
+        if not text:
+            raise ControllerError(422, "No speech recognised", "transcription_failed")
+        return {"text": text, "name_guess": guess_driver(text, self.store.list_drivers())}

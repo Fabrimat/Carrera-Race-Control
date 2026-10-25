@@ -86,6 +86,10 @@ class AppConfig(BaseSettings):
         return self.data_dir / "tts_cache"
 
     @property
+    def avatars_dir(self) -> Path:
+        return self.data_dir / "avatars"
+
+    @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 
