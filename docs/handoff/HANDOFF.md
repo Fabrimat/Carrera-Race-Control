@@ -27,8 +27,9 @@ All done, reviewed, Fable-approved and pushed:
   `v*` release. Repo renamed to `Fabrimat/Carrera-Race-Control` (update local remotes:
   `git remote set-url origin https://github.com/Fabrimat/Carrera-Race-Control.git`).
 - **README** screenshots and GIFs in `docs/images/`.
-- **Presentation video** (84 s, Italian) produced on the user's PC, not in the repo
-  (scratchpad `video/out/carrera-race-control-presentazione.mp4`, scripts in
+- **Presentation video v2** (76 s, Italian, colleague tone, `eleven_v4` voices, Veo 3.1)
+  produced on the user's PC, not in the repo (scratchpad
+  `video/out/carrera-race-control-presentazione.mp4`, v1 kept as `-v1.mp4`, scripts in
   `video/scripts/`).
 
 ## Open points
@@ -36,8 +37,7 @@ All done, reviewed, Fable-approved and pushed:
 - Live-test the `restart` false start rule on the real Control Unit before using it at an
   event (conservative now: worst case the race stays "starting" and the operator presses
   START on the CU). `warn` / `penalty` need no CU interaction.
-- Listen to the video narration once (voices were chosen by metadata); the video was
-  recorded before the "commentator names the driver" fix.
+- Listen to the video narration once (audio was only checked for loudness).
 - Actions on Node 20 are deprecated: merge Dependabot's bumps when they arrive.
 - Roadmap: see docs/ROADMAP.md (webcam tracking, incidents, logos, fuel, pairing,
   responsive panel, keyboard shortcuts).
