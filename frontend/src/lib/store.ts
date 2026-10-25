@@ -1,0 +1,135 @@
+import { create } from 'zustand'
+import { detectLanguage, translate, type Params, type TKey } from '../i18n'
+import type {
+  CommentaryLine,
+  ConnectionInfo,
+  Language,
+  RaceEvent,
+  RaceState,
+  SettingsResponse,
+  WsMessage,
+} from './types'
+
+export type WsStatus = 'connecting' | 'open' | 'offline'
+
+export interface Toast {
+  id: number
+  kind: 'error' | 'info'
+  message: string
+}
+
+export const MAX_COMMENTARY = 50
+const MAX_EVENTS = 100
+
+export const emptyRace: RaceState = {
+  race_id: null,
+  phase: 'idle',
+  config: {
+    mode: 'practice',
+    target_laps: 10,
+    duration_s: 300,
+    min_lap_ms: 2000,
+    max_lap_ms: 120000,
+    low_fuel_threshold: 3,
+    idle_after_s: 30,
+  },
+  start_light: 0,
+  race_time_ms: 0,
+  remaining_ms: null,
+  remaining_laps: null,
+  fuel_mode: false,
+  pit_lane: false,
+  cars: [],
+  best_lap: null,
+}
+
+export const emptyConnection: ConnectionInfo = {
+  status: 'disconnected',
+  mode: 'simulator',
+  address: null,
+  error: null,
+  error_code: null,
+}
+
+/** Server-driven slice of the store, updated by WebSocket messages. */
+export interface LiveState {
+  connection: ConnectionInfo
+  race: RaceState
+  commentary: CommentaryLine[]
+  events: RaceEvent[]
+  muted: boolean
+  stoppedLineId: string | null
+}
+
+export interface AppState extends LiveState {
+  ws: WsStatus
+  settings: SettingsResponse | null
+  language: Language
+  toasts: Toast[]
+  setWs: (s: WsStatus) => void
+  applyMessage: (m: WsMessage) => void
+  setSettings: (s: SettingsResponse) => void
+  setMuted: (m: boolean) => void
+  setConnection: (c: ConnectionInfo) => void
+  setRace: (r: RaceState) => void
+  pushToast: (message: string, kind?: Toast['kind']) => void
+  dismissToast: (id: number) => void
+}
+
+/** Pure reducer for WebSocket messages: returns the changed slice of LiveState. */
+export function reduceMessage(s: LiveState, m: WsMessage): Partial<LiveState> {
+  switch (m.type) {
+    case 'snapshot':
+      return {
+        connection: m.data.connection,
+        race: m.data.race,
+        commentary: m.data.commentary.slice(-MAX_COMMENTARY),
+        muted: m.data.muted,
+      }
+    case 'state':
+      return { race: m.data }
+    case 'connection':
+      return { connection: m.data }
+    case 'event':
+      return { events: [...s.events, m.data].slice(-MAX_EVENTS) }
+    case 'commentary':
+      if (s.commentary.some((l) => l.id === m.data.id)) return {}
+      return { commentary: [...s.commentary, m.data].slice(-MAX_COMMENTARY) }
+    case 'commentary_stop':
+      return { stoppedLineId: m.data.id }
+    case 'muted':
+      return { muted: m.data.muted }
+  }
+}
+
+let toastSeq = 0
+
+export const useStore = create<AppState>((set, get) => ({
+  connection: emptyConnection,
+  race: emptyRace,
+  commentary: [],
+  events: [],
+  muted: false,
+  stoppedLineId: null,
+  ws: 'connecting',
+  settings: null,
+  language: detectLanguage(),
+  toasts: [],
+  setWs: (ws) => set({ ws }),
+  applyMessage: (m) => set((s) => reduceMessage(s, m)),
+  setSettings: (settings) => set({ settings, language: settings.ui_language }),
+  setMuted: (muted) => set({ muted }),
+  setConnection: (connection) => set({ connection }),
+  setRace: (race) => set({ race }),
+  pushToast: (message, kind = 'error') => {
+    const id = ++toastSeq
+    set((s) => ({ toasts: [...s.toasts.slice(-3), { id, kind, message }] }))
+    setTimeout(() => get().dismissToast(id), 6000)
+  },
+  dismissToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
+}))
+
+/** Translate outside React using the current UI language. */
+export function tNow(key: TKey, params?: Params): string {
+  return translate(useStore.getState().language, key, params)
+}

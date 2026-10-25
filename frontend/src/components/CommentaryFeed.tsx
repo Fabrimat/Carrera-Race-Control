@@ -1,0 +1,75 @@
+import { useState } from 'react'
+import { useT } from '../i18n/useT'
+import { api } from '../lib/api'
+import { audioPlayer, saveVolume, loadVolume } from '../lib/audio'
+import { guarded } from '../lib/errors'
+import { useStore } from '../lib/store'
+import type { CommentaryLine } from '../lib/types'
+
+const PRIORITY_BAR: Record<CommentaryLine['priority'], string> = {
+  high: 'border-l-signal',
+  normal: 'border-l-amber',
+  low: 'border-l-line',
+}
+
+export function CommentaryFeed() {
+  const t = useT()
+  const lines = useStore((s) => s.commentary)
+  const muted = useStore((s) => s.muted)
+  const [volume, setVolume] = useState(loadVolume)
+
+  const toggleMute = async () => {
+    void audioPlayer.unlock()
+    const res = await guarded(() => api.mute(!muted))
+    if (res) {
+      useStore.getState().setMuted(res.muted)
+      audioPlayer.setMuted(res.muted)
+    }
+  }
+  const onVolume = (v: number) => {
+    setVolume(v)
+    audioPlayer.setVolume(v)
+    saveVolume(v)
+  }
+
+  return (
+    <section className="rounded-lg border border-line bg-panel p-4" aria-label={t('commentary.title')}>
+      <div className="mb-3 flex flex-wrap items-center gap-4">
+        <h2 className="text-sm font-bold uppercase tracking-widest text-dim">{t('commentary.title')}</h2>
+        <button
+          className={`rounded-md px-3 py-1 text-sm font-bold uppercase ${muted ? 'bg-signal text-white' : 'bg-panel-2'}`}
+          onClick={() => void toggleMute()}
+          aria-pressed={muted}
+        >
+          {muted ? t('commentary.unmute') : t('commentary.mute')}
+        </button>
+        <label className="flex items-center gap-2 text-sm text-dim">
+          {t('commentary.volume')}
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.05}
+            value={volume}
+            onChange={(e) => onVolume(Number(e.target.value))}
+          />
+        </label>
+      </div>
+      {lines.length === 0 ? (
+        <p className="text-dim">{t('commentary.empty')}</p>
+      ) : (
+        <ul className="flex max-h-80 flex-col gap-2 overflow-y-auto">
+          {[...lines].reverse().map((l) => (
+            <li
+              key={l.id}
+              data-testid="commentary-line"
+              className={`rounded border-l-4 bg-panel-2 px-3 py-2 text-lg ${PRIORITY_BAR[l.priority]}`}
+            >
+              {l.text}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  )
+}

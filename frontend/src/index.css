@@ -1,0 +1,27 @@
+@import "tailwindcss";
+
+@theme {
+  --font-display: "Bahnschrift", "DIN Alternate", "Arial Narrow", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "Cascadia Mono", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --color-track: #0b0d10;
+  --color-panel: #14181d;
+  --color-panel-2: #1b2128;
+  --color-line: #2a323b;
+  --color-ink: #e8ecef;
+  --color-dim: #8a96a3;
+  --color-signal: #ff3b30;
+  --color-go: #30d158;
+  --color-amber: #ffb000;
+  --color-purple: #c77dff;
+}
+
+html, body, #root { height: 100%; }
+body {
+  margin: 0;
+  background: var(--color-track);
+  color: var(--color-ink);
+  font-family: var(--font-display);
+  background-image: repeating-linear-gradient(135deg, rgba(255,255,255,0.015) 0 2px, transparent 2px 14px);
+}
+.num { font-variant-numeric: tabular-nums; font-family: var(--font-mono); letter-spacing: -0.02em; }
+input, select, button { font: inherit; }

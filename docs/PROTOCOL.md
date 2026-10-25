@@ -53,7 +53,7 @@ RaceSummary = {
   id: number, started_at: string, finished_at: string | null,
   mode: RaceMode, winner_name: string | null, laps: number, best_lap_ms: number | null,
 }
-RaceDetail = RaceSummary & {
+RaceDetail = Omit<RaceSummary, "laps"> & {   // `laps` is the lap list here, not the count
   config: RaceConfig,
   results: CarState[],                // final standings, by position
   laps: Lap[],                        // every lap, chronological
