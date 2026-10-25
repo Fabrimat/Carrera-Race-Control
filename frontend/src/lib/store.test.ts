@@ -21,9 +21,32 @@ const base = (): LiveState => ({
   events: [],
   muted: false,
   stoppedLineId: null,
+  assignments: {},
+  armedDriverId: null,
+  armedUntil: null,
+  lastAssignment: null,
 })
 
 describe('reduceMessage', () => {
+  it('tracks driver_assigned events: assignment, disarm on crossing, last assignment', () => {
+    const armed = { ...base(), armedDriverId: 'anna', armedUntil: '2026-01-01T00:01:00Z' }
+    const out = reduceMessage(armed, {
+      type: 'event',
+      data: {
+        type: 'driver_assigned',
+        at: '2026-01-01T00:00:10Z',
+        race_time_ms: 0,
+        address: 2,
+        driver_id: 'anna',
+        driver_name: 'Anna',
+        method: 'crossing',
+      },
+    })
+    expect(out.assignments).toEqual({ '2': 'anna' })
+    expect(out.armedDriverId).toBeNull()
+    expect(out.lastAssignment?.address).toBe(2)
+  })
+
   it('applies a snapshot', () => {
     const race = raceState({ phase: 'running' })
     const out = reduceMessage(base(), {

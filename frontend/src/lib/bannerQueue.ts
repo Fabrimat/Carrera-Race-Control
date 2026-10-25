@@ -29,8 +29,10 @@ export interface Banner {
   subtitle?: string
   /** Accent colour (a car colour); kind-specific colours come from CSS. */
   color?: string
+  /** Driver photo (display only) of the featured car. */
+  photo?: string
   /** Free-form payload for card banners (podium rows). */
-  rows?: { pos: number; code: string; name: string; color: string; best: string; time: string }[]
+  rows?: { pos: number; code: string; name: string; color: string; best: string; time: string; photo?: string }[]
 }
 
 export interface ActiveBanner {

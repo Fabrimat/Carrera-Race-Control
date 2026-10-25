@@ -23,6 +23,8 @@ export interface BannerContext {
   t: TFunction
   /** Formats a lap time (ms) for the current language. */
   lap: (ms: number | null | undefined) => string
+  /** URL of the assigned driver's photo, when the car's driver has one. */
+  photoFor?: (car: CarState) => string | null
 }
 
 function make(kind: BannerKind, id: string, title: string, extra: Partial<Banner> = {}): Banner {
@@ -43,7 +45,14 @@ const eventKey = (e: RaceEvent) => `${e.type}:${e.at}:${'address' in e ? e.addre
 export function bannerForEvent(e: RaceEvent, c: BannerContext): Banner | null {
   const car = (a: number | null) => c.cars.find((x) => x.address === a)
   const code = (a: number | null) => (a === null ? '' : (c.codes.get(a) ?? `#${a + 1}`))
-  const name = (a: number | null) => car(a)?.name ?? code(a)
+  const name = (a: number | null) => {
+    const x = car(a)
+    return x ? x.driver_name || x.name : code(a)
+  }
+  const photo = (a: number | null) => {
+    const x = car(a)
+    return x ? (c.photoFor?.(x) ?? undefined) : undefined
+  }
   const id = eventKey(e)
   switch (e.type) {
     case 'best_lap':
@@ -51,11 +60,13 @@ export function bannerForEvent(e: RaceEvent, c: BannerContext): Banner | null {
       return make('fastest_lap', id, c.t('tv.banner.fastest_lap'), {
         subtitle: `${code(e.address)}  ${c.lap(e.lap_ms)}`,
         color: car(e.address)?.color,
+        photo: photo(e.address),
       })
     case 'track_record':
       return make('track_record', id, c.t('tv.banner.track_record'), {
         subtitle: `${name(e.address)}  ${c.lap(e.lap_ms)}`,
         color: car(e.address)?.color,
+        photo: photo(e.address),
       })
     case 'position_change':
       // Only the car that gained the place gets the graphic.
@@ -110,7 +121,8 @@ export function chequeredBanner(race: RaceState, c: BannerContext): Banner {
     rows: ranked.map((x) => ({
       pos: x.position ?? 0,
       code: c.codes.get(x.address) ?? '',
-      name: x.name,
+      name: x.driver_name || x.name,
+      photo: c.photoFor?.(x) ?? undefined,
       color: x.color,
       best: c.lap(x.best_lap_ms),
       time: x.gap_to_leader_laps > 0 ? c.t('gap.laps', { count: x.gap_to_leader_laps }) : x.position === 1 ? `${x.laps} ${c.t('leaderboard.laps')}` : '',

@@ -237,7 +237,7 @@ function MapCanvas({ layout }: { layout: TrackLayout }) {
             data-testid="car-dot"
             data-addr={c.address}
             data-stale={stale ? 'true' : 'false'}
-            aria-label={t('map.car', { name: c.name, pos: c.position ?? '–' })}
+            aria-label={t('map.car', { name: c.driver_name || c.name, pos: c.position ?? '–' })}
           >
             <circle
               ref={(el) => {

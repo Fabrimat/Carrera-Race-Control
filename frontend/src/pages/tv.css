@@ -213,6 +213,9 @@
   display: grid; place-items: center; padding: 0 1.2em; min-width: 4.6em; font-size: 1.7em; font-weight: 800;
   background: var(--accent); color: var(--accent-ink);
 }
+.tv-banner-photo { width: 3.4em; height: 3.4em; align-self: center; margin-left: 0.5em; border-radius: 50%; object-fit: cover; border: 2px solid var(--accent, #fff); }
+.tv-banner:has(.tv-banner-photo) { grid-template-columns: auto auto 1fr; }
+.tv-podium-photo { width: 1.9em; height: 1.9em; border-radius: 50%; object-fit: cover; margin-right: 0.4em; vertical-align: middle; }
 .tv-banner-body { padding: 0.55em 2em 0.55em 1em; display: flex; flex-direction: column; justify-content: center; }
 .tv-banner-title { font-size: 2.1em; font-weight: 800; font-style: italic; letter-spacing: 0.03em; line-height: 1.05; text-transform: uppercase; }
 .tv-banner-sub { font-size: 1.2em; color: var(--tv-dim); font-family: var(--font-mono); letter-spacing: 0.02em; }
