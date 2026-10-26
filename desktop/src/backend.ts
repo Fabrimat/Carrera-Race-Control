@@ -240,7 +240,9 @@ export class BackendSidecar extends EventEmitter {
           }
         }
         signal('SIGTERM')
-        setTimeout(() => signal('SIGKILL'), 5000).unref()
+        const killTimer = setTimeout(() => signal('SIGKILL'), 5000)
+        killTimer.unref()
+        child.once('exit', () => clearTimeout(killTimer)) // never signal a reused PID
       }
     })
   }

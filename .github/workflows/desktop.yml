@@ -104,6 +104,11 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm exec vitest run
 
+      # setup-python gives a universal2 CPython on macOS, but PyInstaller needs a single-arch one.
+      - name: Install a single-architecture Python (macOS)
+        if: matrix.os == 'mac'
+        run: uv python install "cpython-3.12-macos-${{ matrix.arch == 'arm64' && 'aarch64' || 'x86_64' }}"
+
       # electron-builder only ships an x86_64 fpm (used for .deb): use the system one on ARM64.
       - name: Install fpm (Linux ARM64)
         if: matrix.os == 'linux' && matrix.arch == 'arm64'
@@ -126,7 +131,7 @@ jobs:
         working-directory: desktop
         env:
           CARRERA_ARCH: ${{ matrix.arch }}
-          UV_PYTHON: ${{ steps.py.outputs.python-path }}
+          UV_PYTHON: ${{ matrix.os == 'mac' && format('cpython-3.12-macos-{0}', matrix.arch == 'arm64' && 'aarch64' || 'x86_64') || steps.py.outputs.python-path }}
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
           USE_SYSTEM_FPM: ${{ matrix.os == 'linux' && matrix.arch == 'arm64' && 'true' || 'false' }}
         run: npm run dist
@@ -179,10 +184,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: |
+          shopt -s nullglob # a failed non-Windows job leaves no files of its type
+          files=(dist/*.exe dist/*.dmg dist/*.zip dist/*.AppImage dist/*.deb)
+          exes=(dist/*.exe)
+          if [ ${#exes[@]} -eq 0 ]; then echo "no Windows installer built: not releasing"; exit 1; fi
           if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TAG" --generate-notes --verify-tag
           fi
-          shopt -s nullglob # a failed non-Windows job leaves no files of its type
-          files=(dist/*.exe dist/*.dmg dist/*.zip dist/*.AppImage dist/*.deb)
-          if [ ${#files[@]} -eq 0 ]; then echo "no installers to upload"; exit 1; fi
           gh release upload "$TAG" "${files[@]}" --repo "$GITHUB_REPOSITORY" --clobber
