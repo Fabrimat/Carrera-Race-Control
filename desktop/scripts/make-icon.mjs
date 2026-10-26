@@ -1,38 +1,42 @@
-// Generates build/icon.png and build/icon.ico without dependencies (zlib + hand-written PNG).
+// Generates build/icon.png, build/icon-512.png (macOS) and build/icon.ico without dependencies (zlib + hand-written PNG).
 import { deflateSync } from 'node:zlib'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { desktopDir } from './lib.mjs'
 
-const N = 256
-const px = Buffer.alloc(N * N * 4)
-
-function set(x, y, r, g, b, a = 255) {
-  const i = (y * N + x) * 4
-  px[i] = r; px[i + 1] = g; px[i + 2] = b; px[i + 3] = a
-}
-
-for (let y = 0; y < N; y++) {
-  for (let x = 0; x < N; x++) {
-    const dx = x - N / 2 + 0.5
-    const dy = y - N / 2 + 0.5
-    // rounded square background
-    const half = N / 2 - 6
-    const rad = 48
-    const qx = Math.max(Math.abs(dx) - (half - rad), 0)
-    const qy = Math.max(Math.abs(dy) - (half - rad), 0)
-    if (Math.hypot(qx, qy) > rad) { set(x, y, 0, 0, 0, 0); continue }
-    set(x, y, 17, 20, 25)
-    // race track ring (oval) in red with a white centre line
-    const e = Math.hypot(dx / 96, dy / 60)
-    if (e > 0.8 && e < 1.2) set(x, y, 229, 50, 45)
-    if (e > 0.97 && e < 1.03 && (Math.floor((x + y) / 12) % 2 === 0)) set(x, y, 255, 255, 255)
-    // chequered flag block, bottom right
-    if (x > 150 && x < 226 && y > 160 && y < 220) {
-      const c = (Math.floor((x - 150) / 19) + Math.floor((y - 160) / 15)) % 2 === 0
-      set(x, y, c ? 255 : 30, c ? 255 : 30, c ? 255 : 30)
+// Everything is drawn in a 256-unit design space and scaled to the requested size.
+function render(N) {
+  const k = N / 256
+  const px = Buffer.alloc(N * N * 4)
+  const set = (x, y, r, g, b, a = 255) => {
+    const i = (y * N + x) * 4
+    px[i] = r; px[i + 1] = g; px[i + 2] = b; px[i + 3] = a
+  }
+  for (let y = 0; y < N; y++) {
+    for (let x = 0; x < N; x++) {
+      const ux = x / k
+      const uy = y / k
+      const dx = (x + 0.5) / k - 128
+      const dy = (y + 0.5) / k - 128
+      // rounded square background
+      const half = 128 - 6
+      const rad = 48
+      const qx = Math.max(Math.abs(dx) - (half - rad), 0)
+      const qy = Math.max(Math.abs(dy) - (half - rad), 0)
+      if (Math.hypot(qx, qy) > rad) { set(x, y, 0, 0, 0, 0); continue }
+      set(x, y, 17, 20, 25)
+      // race track ring (oval) in red with a white centre line
+      const e = Math.hypot(dx / 96, dy / 60)
+      if (e > 0.8 && e < 1.2) set(x, y, 229, 50, 45)
+      if (e > 0.97 && e < 1.03 && (Math.floor((ux + uy) / 12) % 2 === 0)) set(x, y, 255, 255, 255)
+      // chequered flag block, bottom right
+      if (ux > 150 && ux < 226 && uy > 160 && uy < 220) {
+        const c = (Math.floor((ux - 150) / 19) + Math.floor((uy - 160) / 15)) % 2 === 0
+        set(x, y, c ? 255 : 30, c ? 255 : 30, c ? 255 : 30)
+      }
     }
   }
+  return px
 }
 
 function crc32(buf) {
@@ -50,16 +54,21 @@ function chunk(type, data) {
   const crc = Buffer.alloc(4); crc.writeUInt32BE(crc32(td))
   return Buffer.concat([len, td, crc])
 }
-const ihdr = Buffer.alloc(13)
-ihdr.writeUInt32BE(N, 0); ihdr.writeUInt32BE(N, 4); ihdr[8] = 8; ihdr[9] = 6
-const raw = Buffer.alloc((N * 4 + 1) * N)
-for (let y = 0; y < N; y++) px.copy(raw, y * (N * 4 + 1) + 1, y * N * 4, (y + 1) * N * 4)
-const png = Buffer.concat([
-  Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
-  chunk('IHDR', ihdr),
-  chunk('IDAT', deflateSync(raw, { level: 9 })),
-  chunk('IEND', Buffer.alloc(0)),
-])
+function encodePng(N, px) {
+  const ihdr = Buffer.alloc(13)
+  ihdr.writeUInt32BE(N, 0); ihdr.writeUInt32BE(N, 4); ihdr[8] = 8; ihdr[9] = 6
+  const raw = Buffer.alloc((N * 4 + 1) * N)
+  for (let y = 0; y < N; y++) px.copy(raw, y * (N * 4 + 1) + 1, y * N * 4, (y + 1) * N * 4)
+  return Buffer.concat([
+    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+    chunk('IHDR', ihdr),
+    chunk('IDAT', deflateSync(raw, { level: 9 })),
+    chunk('IEND', Buffer.alloc(0)),
+  ])
+}
+const png = encodePng(256, render(256))
+// electron-builder builds the macOS .icns from a PNG of at least 512x512
+const png512 = encodePng(512, render(512))
 
 // ICO with one PNG-compressed 256x256 image
 const header = Buffer.alloc(22)
@@ -71,5 +80,6 @@ header.writeUInt32LE(png.length, 14); header.writeUInt32LE(22, 18)
 const out = join(desktopDir, 'build')
 mkdirSync(out, { recursive: true })
 writeFileSync(join(out, 'icon.png'), png)
+writeFileSync(join(out, 'icon-512.png'), png512)
 writeFileSync(join(out, 'icon.ico'), Buffer.concat([header, png]))
-console.log('wrote build/icon.png and build/icon.ico')
+console.log('wrote build/icon.png, build/icon-512.png and build/icon.ico')

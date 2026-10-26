@@ -8,7 +8,7 @@ files:
   - dist/**
   - package.json
 extraResources:
-  # PyInstaller onedir backend -> resources/backend/carrera-backend.exe
+  # PyInstaller onedir backend -> resources/backend/carrera-backend(.exe on Windows)
   - from: ../backend/build/pyi-dist/carrera-backend
     to: backend
   # app.main looks for the dashboard at <exe dir>/frontend/dist in a frozen build
@@ -33,4 +33,28 @@ nsis:
   createStartMenuShortcut: true
   shortcutName: Carrera Race Control
   deleteAppDataOnUninstall: false
-artifactName: Carrera-Race-Control-Setup-${version}-${arch}.${ext}
+  artifactName: Carrera-Race-Control-Setup-${version}-${arch}.${ext}
+mac:
+  target: [dmg, zip]
+  category: public.app-category.sports
+  icon: build/icon-512.png # converted to .icns by electron-builder (needs >= 512 px)
+  # Unsigned and not notarized (no Apple developer account): see "macOS" in the README.
+  identity: null
+  hardenedRuntime: false
+  gatekeeperAssess: false
+  artifactName: Carrera-Race-Control-${version}-mac-${env.CARRERA_ARCH}.${ext}
+  extendInfo:
+    # The backend talks to the Carrera Control Unit over Bluetooth Low Energy; macOS asks once.
+    NSBluetoothAlwaysUsageDescription: Carrera Race Control uses Bluetooth to talk to the Carrera Digital 124/132 Control Unit.
+    NSBluetoothPeripheralUsageDescription: Carrera Race Control uses Bluetooth to talk to the Carrera Digital 124/132 Control Unit.
+linux:
+  target: [AppImage, deb]
+  category: Game
+  icon: build/icon-512.png
+  maintainer: Fabrizio La Rosa <Fabrimat@users.noreply.github.com>
+  synopsis: Race control for Carrera Digital 124/132
+  executableName: carrera-race-control
+  desktop:
+    entry:
+      Comment: Race control for Carrera Digital 124/132
+  artifactName: Carrera-Race-Control-${version}-linux-${env.CARRERA_ARCH}.${ext}
