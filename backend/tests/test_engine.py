@@ -555,7 +555,7 @@ def test_practice_never_finishes_but_stop_does():
     clock.advance(10_000)
     assert of_type(engine.tick(), RaceFinished) == []
     ev = engine.stop()
-    assert len(of_type(ev, RaceFinished)) == 1 and ev[0].winner == 0
+    assert len(of_type(ev, RaceFinished)) == 1 and ev[-1].winner == 0
     assert engine.state.phase is RacePhase.FINISHED
     assert engine.stop() == []
 

@@ -85,6 +85,8 @@ from app.race.models import (
     FuelStrategy,
     Idle,
     Incident,
+    IncidentCleared,
+    IncidentStarted,
     Lap,
     LapCompleted,
     LowFuel,
@@ -317,6 +319,9 @@ class RaceEngine:
         car's next crossing only sets a new reference (no lap). See :meth:`_check_resync`.
         """
         self._pending_resync = True
+        if self._emitting():  # the silence of the link is not a stalled car
+            self._advance_clock()
+            self._restart_watch()
 
     def update_cars(self, cars: list[CarConfig]) -> None:
         """Names/colors may change at any time; runtime data of existing cars is kept."""
@@ -338,6 +343,8 @@ class RaceEngine:
             self._phase = RacePhase.PAUSED
         elif not paused and self._phase is RacePhase.PAUSED:
             self._phase = RacePhase.RUNNING
+            self._advance_clock()
+            self._restart_watch()  # cars were held by the pace car: watch them from now
         return []
 
     def _remember_light(self) -> None:
@@ -657,6 +664,7 @@ class RaceEngine:
                     events.append(PitEntry(address=address, race_time_ms=self._race_ms))
             else:
                 car.in_pit = False
+                car.watch_from_ms = self._race_ms  # incident watch restarts at the pit exit
                 if emit:
                     events.append(
                         PitExit(
@@ -724,12 +732,12 @@ class RaceEngine:
             car.last_ts = msg.timestamp
             car.total_time_ms = race_t
             self._new_lap_marks(car, race_t)
-            return []
+            return self._clear_incident(car, "crossing", race_t)
         if address in self._resync:  # first crossing after a CU restart: new reference
             self._resync.discard(address)
             car.last_ts = msg.timestamp
             self._new_lap_marks(car, race_t)
-            return []
+            return self._clear_incident(car, "crossing", race_t)
 
         lap_ms = ts_diff(msg.timestamp, car.last_ts)
         if lap_ms < self.config.min_lap_ms:
@@ -830,6 +838,7 @@ class RaceEngine:
         car.line_ok = True
         car.seg_pit = car.in_pit
         car.last_crossing = Crossing(sensor=1, race_time_ms=race_t)
+        self._watch_from_crossing(car, race_t)
 
     def _record_sector(self, car: _Car, key: int, split: int) -> tuple[bool, bool]:
         """Update personal/overall bests; returns (personal_best, overall_best) flags."""
@@ -887,12 +896,14 @@ class RaceEngine:
         car.marks[sensor] = ts
         car.cur[sensor] = split
         car.last_crossing = Crossing(sensor=sensor, race_time_ms=race_t)
+        self._watch_from_crossing(car, race_t)
+        events = self._clear_incident(car, "crossing", race_t)
         car.seg_pit = car.in_pit
         if split is None:
-            return []
+            return events
         self._learn_segment(car, prev_sensor, sensor, split, tainted)
         personal, overall = self._record_sector(car, sensor, split)
-        return [
+        return events + [
             SectorCompleted(
                 address=car.address,
                 lap_number=car.laps + 1,
@@ -947,6 +958,7 @@ class RaceEngine:
         car.line_ok = True
         car.seg_pit = car.in_pit
         car.last_crossing = Crossing(sensor=1, race_time_ms=race_t)
+        self._watch_from_crossing(car, race_t)
         return events
 
     # ---- finishing
@@ -1033,19 +1045,145 @@ class RaceEngine:
     # ------------------------------------------------------------------ roadmap wave 1 hooks
     # Call sites are fixed (contract commit); briefs IB and F fill in the bodies.
 
+    # ---- incidents (brief IB; docs/PROTOCOL.md "Incidents")
+
+    def _watch_from_crossing(self, car: _Car, race_t: int) -> None:
+        """A counted crossing (it updated ``last_crossing``) restarts the incident watch."""
+        car.watch_from_ms = race_t
+        car.watch_after_crossing = False
+
+    def _restart_watch(self) -> None:
+        """Resume from PAUSED / CU resync: every car is watched from the current race time."""
+        for car in self._cars.values():
+            car.watch_from_ms = self._race_ms
+
+    def _stretch(self, car: _Car) -> tuple[int, int] | None:
+        """(from sensor, to sensor) of the stretch the car is driving; the line is 1."""
+        crossing = car.last_crossing
+        if crossing is None:
+            return None
+        if not self._order:
+            return (1, 1)
+        if crossing.sensor == 1:
+            return (1, self._order[0])
+        if crossing.sensor in self._order:
+            index = self._order.index(crossing.sensor)
+            following = self._order[index + 1] if index + 1 < len(self._order) else 1
+            return (crossing.sensor, following)
+        return None
+
+    def _expected_ms(self, car: _Car) -> int | None:
+        """Time the car normally needs for its current stretch (None = not known yet)."""
+        stretch = self._stretch(car)
+        if stretch is None:
+            return None
+        if not self._order:
+            return car.seg_est.get("1>1")  # outlier-protected lap estimate
+        return car.seg_est.get(f"{stretch[0]}>{stretch[1]}")
+
+    def _open_incident(self, car: _Car, source: Literal["overdue", "marshal"]) -> list[RaceEvent]:
+        stretch = self._stretch(car)
+        incident = Incident(
+            started_race_ms=self._race_ms,
+            source=source,
+            from_sensor=stretch[0] if stretch else None,
+            to_sensor=stretch[1] if stretch else None,
+        )
+        car.incident = incident
+        car.incidents += 1
+        penalty_ms = self.config.incidents.penalty_s * 1000
+        car.penalty_ms += penalty_ms
+        return [
+            IncidentStarted(
+                address=car.address,
+                source=source,
+                from_sensor=incident.from_sensor,
+                to_sensor=incident.to_sensor,
+                count=car.incidents,
+                penalty_ms=penalty_ms,
+                race_time_ms=self._race_ms,
+            )
+        ]
+
     def _check_incidents(self) -> list[RaceEvent]:
-        """Brief IB: open overdue incidents (tick, RUNNING only, also while finishing)."""
-        return []
+        """Open overdue incidents (tick, RUNNING only, also while finishing)."""
+        rules = self.config.incidents
+        if self._phase is not RacePhase.RUNNING or not rules.detect:
+            return []
+        watched = 0
+        overdue: list[_Car] = []
+        for car in sorted(self._cars.values(), key=lambda c: c.address):
+            if (
+                car.last_crossing is None
+                or car.in_pit
+                or car.finished
+                or car.incident is not None
+                or car.watch_after_crossing
+            ):
+                continue
+            expected = self._expected_ms(car)
+            if expected is None:
+                continue
+            watched += 1
+            anchor = max(car.last_crossing.race_time_ms, car.watch_from_ms)
+            if self._race_ms - anchor > rules.overdue_factor * expected:
+                overdue.append(car)
+        if not overdue or (watched >= 2 and len(overdue) == watched):
+            # nobody late, or every car of several (a deliberate halt / a CU hiccup)
+            return []
+        events: list[RaceEvent] = []
+        for car in overdue:
+            events.extend(self._open_incident(car, "overdue"))
+        return events
+
+    def report_incident(self, address: int) -> list[RaceEvent]:
+        """The marshal reports a car off the track (no-op when it already has an incident).
+
+        Raises :class:`KeyError` for an address with no car.
+        """
+        car = self._cars.get(address)
+        if car is None:
+            raise KeyError(address)
+        if not self._emitting() or car.incident is not None:
+            return []
+        self._advance_clock()
+        return self._open_incident(car, "marshal")
+
+    def marshal_clear_incident(self, address: int) -> list[RaceEvent]:
+        """The marshal puts the car back on track.
+
+        Raises :class:`KeyError` when there is no such car or it has no open incident.
+        """
+        car = self._cars.get(address)
+        if car is None or car.incident is None:
+            raise KeyError(address)
+        self._advance_clock()
+        return self._clear_incident(car, "marshal", self._race_ms)
+
+    def has_open_incident(self) -> bool:
+        return any(car.incident is not None for car in self._cars.values())
 
     def _clear_incident(
         self, car: _Car, by: Literal["crossing", "marshal", "race_end"], race_t: int
     ) -> list[RaceEvent]:
-        """Brief IB: close ``car``'s open incident (a counted crossing, marshal, race end)."""
-        return []
+        """Close ``car``'s open incident (a counted crossing, the marshal, the race end)."""
+        if car.incident is None:
+            return []
+        lost = max(0, race_t - car.incident.started_race_ms)
+        car.incident = None
+        car.incident_lost_ms += lost
+        if by == "marshal":
+            car.watch_after_crossing = True  # not watched again until its next crossing
+        return [IncidentCleared(address=car.address, by=by, lost_ms=lost, race_time_ms=race_t)]
 
     def _close_incidents_at_end(self) -> list[RaceEvent]:
-        """Brief IB: close every open incident with ``by="race_end"`` before RaceFinished."""
-        return []
+        """Close every open incident with ``by="race_end"`` before RaceFinished."""
+        events: list[RaceEvent] = []
+        for car in sorted(self._cars.values(), key=lambda c: c.address):
+            events.extend(self._clear_incident(car, "race_end", self._race_ms))
+        return events
+
+    # ---- fuel strategy / pit rules (brief F)
 
     def _apply_pit_penalties(self) -> list[RaceEvent]:
         """Brief F: mandatory pit stop penalties (PitMissed) before the final order."""

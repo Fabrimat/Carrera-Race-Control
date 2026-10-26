@@ -26,6 +26,8 @@ from app.race.models import (
     DriverAssigned,
     FalseStart,
     Idle,
+    IncidentCleared,
+    IncidentStarted,
     LapCompleted,
     LowFuel,
     PitEntry,
@@ -204,6 +206,14 @@ def candidates(
         specs.extend(_false_start_specs(event, lang, name))
     elif isinstance(event, SessionFinished):
         specs.extend(_session_specs(event, state, name))
+    elif isinstance(event, IncidentStarted):
+        specs.extend(_incident_started_specs(event, state, lang, name))
+    elif isinstance(event, IncidentCleared):
+        # At the race end the chequered flag is the story, not the marshal's report.
+        if event.by != "race_end":
+            fields = {"name": name(event.address)}
+            facts = {"driver": name(event.address), "by": event.by, "lost_ms": event.lost_ms}
+            specs.append(("incident_cleared", prio.NORMAL, fields, facts, event.address))
     elif isinstance(event, LapCompleted):
         specs.extend(_lap_specs(event, state, verbosity, lang, name))
     elif isinstance(event, SectorCompleted):
@@ -239,6 +249,39 @@ def _false_start_specs(event: FalseStart, lang: str, name: Callable[[int], str])
     else:
         key = "false_start_warn"
     return [(key, prio.HIGH, fields, facts, event.address)]
+
+
+def _incident_sector(event: IncidentStarted, num_sectors: int) -> int | None:
+    """The sector (1-based) of the stretch the car stopped in, None when unknown."""
+    a, b = event.from_sensor, event.to_sensor
+    if a is None or b is None or num_sectors < 2 or (a == 1 and b == 1):
+        return None
+    if a == 1:
+        return 1
+    if b == 1:
+        return num_sectors
+    return 2
+
+
+def _incident_started_specs(
+    event: IncidentStarted, state: RaceState, lang: str, name: Callable[[int], str]
+) -> list[_Spec]:
+    """A car is off the track: HIGH, with the sector when the Check Lanes tell it."""
+    fields = {"name": name(event.address)}
+    facts: dict[str, Any] = {
+        "driver": name(event.address),
+        "count": event.count,
+        "source": event.source,
+    }
+    sector = _incident_sector(event, state.num_sectors)
+    if sector is not None:
+        fields["sector"] = speech.say_number(sector, lang)
+        facts["sector"] = sector
+    key = "incident_started"
+    if event.count > 1:
+        key = "incident_again"
+        fields["count"] = speech.say_number(event.count, lang)
+    return [(key, CommentaryPriority.HIGH, fields, facts, event.address)]
 
 
 def _session_specs(

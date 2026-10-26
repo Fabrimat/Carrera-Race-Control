@@ -138,6 +138,26 @@ TEMPLATES: dict[str, list[str]] = {
         "Pole position goes to {winner}!",
         "{session} is over, {winner} is on pole!",
     ],
+    # ---- incidents: a car is off the track (a variant with {sector} needs the Check Lanes)
+    "incident_started": [
+        "{name} is off! A marshal is needed!",
+        "Trouble for {name}, the car is stopped on the track!",
+        "{name} has gone off, yellow flag!",
+        "Careful! {name} is off in sector {sector}!",
+        "Yellow flag in sector {sector}, {name} is off!",
+    ],
+    "incident_again": [
+        "{name} is off again, that is incident number {count}!",
+        "Again {name}! Incident number {count}!",
+        "{name} goes off once more, that makes {count} incidents!",
+        "Incident number {count} in sector {sector}: {name} is off again!",
+    ],
+    "incident_cleared": [
+        "{name} is back on track!",
+        "And {name} is racing again!",
+        "{name} rejoins the race.",
+        "Green light, {name} is back in action!",
+    ],
 }
 
 STATIC_FIELDS = frozenset(

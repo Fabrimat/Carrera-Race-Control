@@ -67,6 +67,7 @@ from app.race.models import (
     EventProgram,
     EventState,
     FalseStart,
+    IncidentStarted,
     LapCompleted,
     LayoutDraft,
     RaceConfig,
@@ -88,7 +89,7 @@ from app.race.models import (
     TrackSettings,
     utcnow,
 )
-from app.race.position import estimate_positions
+from app.race.position import estimate_positions, sensor_positions
 from app.race.store import RaceStore
 from app.track.base import (
     Status,
@@ -166,6 +167,8 @@ ErrorCode = Literal[
     "import_unsupported",
     "invalid_request",
     "transcription_failed",
+    "race_not_running",
+    "incident_not_found",
     # Track errors (TrackErrorCode) are passed through as they are:
     "busy",
     "not_found",
@@ -337,6 +340,9 @@ class RaceController:
         self._sequence_seen = False
         self._reconnect_attempt = 0
         self._started = False
+        # Auto pace car (IncidentRules.auto_pace_car): True while the CU pace car out on the
+        # track is ours (we deployed it for an incident and will recall it).
+        self._pace_owned = False
 
         # Event mode (programs and sessions): the active program of `self._event_state`.
         self._active_program: EventProgram | None = None
@@ -514,6 +520,7 @@ class RaceController:
             for car in state.cars:
                 car.track_pos = positions.get(car.address)
         self._fill_drivers(state)
+        self._fill_incident_places(state)
         return state
 
     def snapshot_message(self) -> str:
@@ -570,6 +577,8 @@ class RaceController:
     async def _process_events(self, events: list[RaceEvent]) -> None:
         state = self.race_state()
         for event in events:
+            if isinstance(event, IncidentStarted):
+                event.s = self._incident_place(event.from_sensor, event.to_sensor)
             self._persist(event, state)
             if isinstance(event, RaceStarted):
                 self.budget.reset_session()
@@ -593,6 +602,7 @@ class RaceController:
                 await self.director.submit(session_event, state)
         if finished:
             self._apply_idle_config()
+        await self._sync_auto_pace_car(events)
         self._mark_dirty()
 
     def _load_record(self, layout: str) -> TrackRecordInfo | None:
@@ -947,6 +957,7 @@ class RaceController:
             config = self._session_config(current[1]) if current else self.settings.race
         self._apply_session_rules(current[1] if current else None)
         await self._cancel_watchdog()
+        self._pace_owned = False
         self.engine.prepare(config)
         self._new_race_in_store(config)
         self._sequence_seen = False
@@ -1020,6 +1031,7 @@ class RaceController:
 
     async def reset_race(self) -> RaceState:
         await self._cancel_watchdog()
+        await self._recall_pace_car()
         self.engine.reset()
         self.engine.race_id = None
         self._sequence_seen = False
@@ -1041,12 +1053,121 @@ class RaceController:
             raise ControllerError(
                 503, f"Pace car command failed: {_describe(exc)}", "pace_car_failed"
             ) from exc
+        self._pace_owned = False  # the user took the pace car over: we stop tracking it
         if self.engine.phase in (RacePhase.RUNNING, RacePhase.PAUSED):
             events = self.engine.set_paused(self.engine.phase is RacePhase.RUNNING)
             if events:
                 await self._process_events(events)
         self._mark_dirty()
         return self.race_state()
+
+    # ------------------------------------------------------------------ incidents (marshal)
+
+    def _require_incident_phase(self) -> None:
+        if self.engine.phase not in (RacePhase.RUNNING, RacePhase.PAUSED):
+            raise ControllerError(409, "No race is running", "race_not_running")
+
+    async def report_incident(self, address: int) -> RaceState:
+        """The marshal reports a car off the track (no-op when it already has an incident)."""
+        self._require_incident_phase()
+        try:
+            events = self.engine.report_incident(address)
+        except KeyError:
+            raise ControllerError(404, f"No car {address}", "incident_not_found") from None
+        if events:
+            await self._process_events(events)
+        return self.race_state()
+
+    async def clear_incident(self, address: int) -> RaceState:
+        """The marshal puts the car back on track."""
+        self._require_incident_phase()
+        try:
+            events = self.engine.marshal_clear_incident(address)
+        except KeyError:
+            raise ControllerError(
+                404, f"Car {address} has no open incident", "incident_not_found"
+            ) from None
+        await self._process_events(events)
+        return self.race_state()
+
+    def _incident_place(self, from_sensor: int | None, to_sensor: int | None) -> float | None:
+        """Midpoint (0..1 of the lap) of the stretch a car stopped in, through the line."""
+        if self._layout is None or from_sensor is None or to_sensor is None:
+            return None
+        positions = sensor_positions(self._layout)
+        if from_sensor not in positions or to_sensor not in positions:
+            return None
+        start, end = positions[from_sensor], positions[to_sensor]
+        if end <= start:
+            end += 1.0  # the stretch wraps through the start/finish line
+        return round(((start + end) / 2) % 1.0, 4)
+
+    def _fill_incident_places(self, state: RaceState) -> None:
+        for car in state.cars:
+            if car.incident is not None:
+                car.incident.s = self._incident_place(
+                    car.incident.from_sensor, car.incident.to_sensor
+                )
+
+    # ------------------------------------------------------------------ auto pace car
+
+    async def _sync_auto_pace_car(self, events: list[RaceEvent]) -> None:
+        """Deploy the CU pace car for the first open incident and recall it afterwards.
+
+        Toggling the pace car pauses the engine, so "ours is out" is tracked in
+        ``_pace_owned`` (the CU status has no pace-car flag). Failures are logged only.
+        """
+        phase = self.engine.phase
+        if self._pace_owned:
+            if phase not in (RacePhase.RUNNING, RacePhase.PAUSED) or (
+                phase is RacePhase.PAUSED and not self.engine.has_open_incident()
+            ):
+                await self._recall_pace_car()
+            return
+        if (
+            self.engine.config.incidents.auto_pace_car
+            and phase is RacePhase.RUNNING
+            and any(isinstance(e, IncidentStarted) for e in events)
+        ):
+            await self._deploy_pace_car()
+
+    def _connected_track(self) -> TrackInterface | None:
+        if self._track is None or self.connection.status != "connected":
+            return None
+        return self._track
+
+    async def _deploy_pace_car(self) -> None:
+        track = self._connected_track()
+        if track is None:
+            log.warning("auto pace car: not connected, the pace car was not deployed")
+            return
+        self._pace_owned = True  # before the await: a concurrent batch must not deploy twice
+        try:
+            await track.toggle_pace_car()
+        except Exception as exc:
+            self._pace_owned = False
+            log.warning("auto pace car: deploying failed: %s", _describe(exc))
+            return
+        self.engine.set_paused(True)
+        log.info("auto pace car deployed for an incident")
+
+    async def _recall_pace_car(self) -> None:
+        """Bring our own pace car back (no-op when it is not ours)."""
+        if not self._pace_owned:
+            return
+        self._pace_owned = False
+        track = self._connected_track()
+        if track is None:
+            log.warning("auto pace car: not connected, it could not be recalled")
+            return
+        try:
+            await track.toggle_pace_car()
+        except Exception as exc:
+            log.warning("auto pace car: recalling failed: %s", _describe(exc))
+            return
+        self.engine.set_paused(False)
+        log.info("auto pace car recalled")
+        self._mark_dirty()
 
     # ------------------------------------------------------------------ settings
 
