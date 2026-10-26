@@ -19,8 +19,16 @@ win:
     - nsis # arch comes from the CLI flag set by scripts/package.mjs
   icon: build/icon.ico
 nsis:
-  oneClick: true
+  # Assisted installer: the user picks the folder (and "just me" / "all users"). Data stays in
+  # %APPDATA% (userData), so any folder works, including Program Files.
+  oneClick: false
   perMachine: false
+  allowToChangeInstallationDirectory: true
+  allowElevation: true
+  # English and Italian installer pages, picked from the Windows language.
+  multiLanguageInstaller: true
+  installerLanguages: [en_US, it_IT]
+  displayLanguageSelector: false
   createDesktopShortcut: always
   createStartMenuShortcut: true
   shortcutName: Carrera Race Control
