@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef, useState } from 'react'
 import { useFormat, useT } from '../i18n/useT'
+import { CarLogo } from './CarLogo'
 import { guarded } from '../lib/errors'
 import { MAX_CAR_NAME, renameCar } from '../lib/settingsSave'
 import { useStore } from '../lib/store'
@@ -240,6 +241,7 @@ export function Leaderboard({
                   style={{ background: c.color }}
                   aria-hidden
                 />
+                <CarLogo logoId={c.logo_id} size={large ? 40 : dense ? 24 : 28} />
                 <CarName address={c.address} name={c.driver_name || c.name} editable={editable && !c.driver_name} />
                 {c.in_pit && (
                   <span

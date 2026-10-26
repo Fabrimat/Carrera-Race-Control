@@ -22,6 +22,7 @@ from app.race.models import (
     EventProgram,
     EventState,
     Lap,
+    Logo,
     RaceConfig,
     RaceState,
     Settings,
@@ -30,7 +31,7 @@ from app.race.models import (
     utcnow,
 )
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 # Version 1 baseline (also what a fresh database starts from before migrating).
 _SCHEMA = """
@@ -108,6 +109,15 @@ _MIGRATIONS: dict[int, tuple[str, ...]] = {
         """
         CREATE TABLE IF NOT EXISTS event_state (
             id INTEGER PRIMARY KEY CHECK (id = 1),
+            json TEXT NOT NULL
+        )
+        """,
+    ),
+    5: (
+        """
+        CREATE TABLE IF NOT EXISTS logos (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
             json TEXT NOT NULL
         )
         """,
@@ -410,6 +420,35 @@ class RaceStore:
     def delete_driver(self, driver_id: str) -> bool:
         with self._write():
             cursor = self._conn.execute("DELETE FROM drivers WHERE id = ?", (driver_id,))
+        return cursor.rowcount > 0
+
+    # ------------------------------------------------------------------ logos
+
+    def get_logo(self, logo_id: str) -> Logo | None:
+        with self._lock:
+            row = self._conn.execute("SELECT json FROM logos WHERE id = ?", (logo_id,)).fetchone()
+        return Logo.model_validate_json(row["json"]) if row is not None else None
+
+    def list_logos(self) -> list[Logo]:
+        """All logos, sorted by name (case-insensitive)."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT json FROM logos ORDER BY name COLLATE NOCASE, id"
+            ).fetchall()
+        return [Logo.model_validate_json(row["json"]) for row in rows]
+
+    def save_logo(self, logo: Logo) -> Logo:
+        """Insert or replace a logo by id."""
+        with self._write():
+            self._conn.execute(
+                "INSERT OR REPLACE INTO logos (id, name, json) VALUES (?, ?, ?)",
+                (logo.id, logo.name, logo.model_dump_json()),
+            )
+        return logo
+
+    def delete_logo(self, logo_id: str) -> bool:
+        with self._write():
+            cursor = self._conn.execute("DELETE FROM logos WHERE id = ?", (logo_id,))
         return cursor.rowcount > 0
 
     # ------------------------------------------------------------------ event programs

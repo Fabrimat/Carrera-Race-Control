@@ -90,6 +90,10 @@ class AppConfig(BaseSettings):
         return self.data_dir / "avatars"
 
     @property
+    def logos_dir(self) -> Path:
+        return self.data_dir / "logos"
+
+    @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 

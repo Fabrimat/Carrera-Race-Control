@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import re
+from collections.abc import Container
 from dataclasses import asdict
 from typing import Annotated, Any, Literal
 
@@ -125,8 +126,12 @@ MAX_CAR_NAME = 40
 _COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 
-def settings_errors(settings: Settings) -> list[str]:
-    """API-level checks on top of the model (models.py is the wire contract, kept as is)."""
+def settings_errors(settings: Settings, known_logo_ids: Container[str] | None = None) -> list[str]:
+    """API-level checks on top of the model (models.py is the wire contract, kept as is).
+
+    ``known_logo_ids`` (the logo library) is only given where a car may not point at a logo
+    that does not exist; imports null unknown ids instead of validating them.
+    """
     errors: list[str] = []
     if len(settings.cars) > MAX_CARS:
         errors.append(f"At most {MAX_CARS} cars are allowed")
@@ -139,15 +144,21 @@ def settings_errors(settings: Settings) -> list[str]:
             errors.append(f"Car {car.address}: name longer than {MAX_CAR_NAME} characters")
         if not _COLOR_RE.match(car.color):
             errors.append(f"Car {car.address}: color must look like #RRGGBB")
+        if (
+            known_logo_ids is not None
+            and car.logo_id is not None
+            and car.logo_id not in known_logo_ids
+        ):
+            errors.append(f"Car {car.address}: unknown logo {car.logo_id!r}")
     return errors
 
 
 @router.put("/api/settings", response_model=SettingsResponse)
 async def put_settings(request: Request, settings: Settings) -> SettingsResponse:
-    errors = settings_errors(settings)
+    ctl = controller(request)
+    errors = settings_errors(settings, {logo.id for logo in ctl.list_logos()})
     if errors:
         raise ControllerError(422, "; ".join(errors), "settings_invalid")
-    ctl = controller(request)
     ctl.update_settings(settings)
     return _settings_response(ctl)
 

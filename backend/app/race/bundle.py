@@ -9,7 +9,7 @@ before anything is written. API keys are not part of any section and photos are 
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Container
 from typing import Any, Literal
 
 from app.avatars import ID_RE, AvatarStore
@@ -100,6 +100,19 @@ def bundle_errors(
     return errors
 
 
+def null_unknown_logos(settings: Settings, known: Container[str]) -> Settings:
+    """Imported cars may name logos this machine lacks (images are never exported): null them."""
+    if all(car.logo_id is None or car.logo_id in known for car in settings.cars):
+        return settings
+    cars = [
+        car.model_copy(update={"logo_id": None})
+        if car.logo_id is not None and car.logo_id not in known
+        else car
+        for car in settings.cars
+    ]
+    return settings.model_copy(update={"cars": cars})
+
+
 def apply_bundle(
     store: RaceStore,
     avatars: AvatarStore,
@@ -116,8 +129,9 @@ def apply_bundle(
     removed_drivers: set[str] = set()
     with store.transaction(commit=not dry_run):
         if bundle.settings is not None:
-            changed = store.load_settings() != bundle.settings
-            store.save_settings(bundle.settings)
+            settings = null_unknown_logos(bundle.settings, {x.id for x in store.list_logos()})
+            changed = store.load_settings() != settings
+            store.save_settings(settings)
             report["settings"] = _counts(updated=int(changed))
         if bundle.drivers is not None:
             removed_drivers = _import_drivers(store, avatars, bundle, mode, report)

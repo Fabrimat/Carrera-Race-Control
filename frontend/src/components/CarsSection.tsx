@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useT } from '../i18n/useT'
+import { useLogos } from '../lib/logos'
+import { CarLogo } from './CarLogo'
 import { apiErrorMessage } from '../lib/errors'
 import {
   applyCarPatches,
@@ -33,6 +35,7 @@ export function sendableEdits(edits: CarEdits): CarEdits {
     if (patch.name !== undefined && !bad.name) ok.name = patch.name.trim()
     if (patch.color !== undefined && !bad.color) ok.color = patch.color
     if (patch.nickname !== undefined) ok.nickname = patch.nickname
+    if (patch.logo_id !== undefined) ok.logo_id = patch.logo_id
     if (Object.keys(ok).length > 0) out[Number(addr)] = ok
   }
   return out
@@ -48,6 +51,7 @@ function dropSaved(edits: CarEdits, sent: CarEdits): CarEdits {
     if (was.name !== undefined && patch.name === was.name) delete rest.name
     if (was.color !== undefined && patch.color === was.color) delete rest.color
     if (was.nickname !== undefined && patch.nickname === was.nickname) delete rest.nickname
+    if (was.logo_id !== undefined && patch.logo_id === was.logo_id) delete rest.logo_id
     if (Object.keys(rest).length > 0) next[Number(addr)] = rest
   }
   return next
@@ -60,6 +64,8 @@ function dropSaved(edits: CarEdits, sent: CarEdits): CarEdits {
  */
 export function CarsSection({ cars }: { cars: CarConfig[] }) {
   const t = useT()
+  // The library is loaded by LogosSection (same page) and by CarLogo for unknown ids.
+  const logos = useLogos((s) => s.logos)
   const [edits, setEdits] = useState<CarEdits>({})
   const [status, setStatus] = useState<Status>({ kind: 'idle' })
   const editsRef = useRef<CarEdits>({})
@@ -119,9 +125,10 @@ export function CarsSection({ cars }: { cars: CarConfig[] }) {
           const name = e.name ?? c.name
           const color = e.color ?? c.color
           const nickname = e.nickname !== undefined ? e.nickname : c.nickname
+          const logoId = e.logo_id !== undefined ? e.logo_id : c.logo_id
           const bad = validateCarPatch({ name, color })
           return (
-            <div key={c.address} className="grid grid-cols-[3rem_1fr_1fr_4rem] items-start gap-3" data-testid="car-row">
+            <div key={c.address} className="grid grid-cols-[3rem_1fr_1fr_1fr_4rem] items-start gap-3" data-testid="car-row">
               <span className="num pt-6 text-xl font-bold">{c.address + 1}</span>
               <Field label={t('settings.car_name')}>
                 <input
@@ -142,6 +149,25 @@ export function CarsSection({ cars }: { cars: CarConfig[] }) {
                   data-testid="car-nickname"
                   onChange={(ev) => edit(c.address, { nickname: ev.target.value || null })}
                 />
+              </Field>
+              <Field label={t('logos.car_logo')}>
+                <span className="flex items-center gap-2">
+                  <select
+                    className={`${input} min-w-0 flex-1`}
+                    value={logoId ?? ''}
+                    data-testid="car-logo-select"
+                    onChange={(ev) => edit(c.address, { logo_id: ev.target.value || null })}
+                  >
+                    <option value="">{t('logos.none')}</option>
+                    {logoId && !logos.some((l) => l.id === logoId) && <option value={logoId}>{logoId}</option>}
+                    {logos.map((l) => (
+                      <option key={l.id} value={l.id}>
+                        {l.name}
+                      </option>
+                    ))}
+                  </select>
+                  <CarLogo logoId={logoId} size={32} />
+                </span>
               </Field>
               <Field label={t('settings.car_color')}>
                 <input

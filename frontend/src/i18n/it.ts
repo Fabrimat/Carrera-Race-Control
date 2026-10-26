@@ -523,6 +523,25 @@ export const it: Messages = {
   'tv.results.qualifying': 'Classifica delle qualifiche',
 
   // ---- logos (roadmap wave 1): add keys only here
+  'logos.title': 'Loghi delle marche',
+  'logos.hint': 'PNG, JPEG, WebP o SVG, fino a 512 KB. Scegline uno per auto nell’elenco qui sopra; più auto possono condividere un logo.',
+  'logos.empty': 'Nessun logo per ora.',
+  'logos.upload': 'Carica un logo',
+  'logos.name': 'Nome del logo',
+  'logos.rename': 'Rinomina {name}',
+  'logos.replace': 'Sostituisci immagine',
+  'logos.replace_named': 'Sostituisci l’immagine di {name}',
+  'logos.delete': 'Elimina',
+  'logos.delete_named': 'Elimina {name}',
+  'logos.delete_confirm': 'Eliminare {name}? Le auto che lo usano perdono il logo.',
+  'logos.delete_yes': 'Sì, elimina',
+  'logos.car_logo': 'Logo',
+  'logos.none': 'Nessun logo',
+  'logos.too_large': 'Il file supera i 512 KB.',
+  'logos.bad_type': 'Usa un’immagine PNG, JPEG, WebP o SVG.',
+  'error.logo_not_found': 'Questo logo non esiste più.',
+  'error.image_too_large': 'L’immagine è troppo grande.',
+  'error.invalid_image': 'Il file non è un’immagine accettata (PNG, JPEG, WebP o un SVG semplice).',
 
   // ---- incidents, marshal calls (roadmap wave 1): add keys only here
   'event.incident_started': '{name} è fuori pista',

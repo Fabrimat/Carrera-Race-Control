@@ -17,6 +17,7 @@ import type {
   ExportBundle,
   ExportSection,
   ImportReport,
+  Logo,
   TrackRecordInfo,
 } from './types'
 
@@ -108,6 +109,14 @@ export const api = {
     request<Driver>('PUT', `/api/drivers/${encodeURIComponent(id)}/photo`, body),
   deleteDriverPhoto: (id: string) =>
     request<Driver>('DELETE', `/api/drivers/${encodeURIComponent(id)}/photo`),
+  logos: () => request<{ logos: Logo[] }>('GET', '/api/logos'),
+  createLogo: (body: { name: string; image_base64: string }) => request<Logo>('POST', '/api/logos', body),
+  updateLogo: (id: string, body: { name: string; image_base64: string | null }) =>
+    request<Logo>('PUT', `/api/logos/${encodeURIComponent(id)}`, body),
+  deleteLogo: (id: string) => request<{ logos: Logo[] }>('DELETE', `/api/logos/${encodeURIComponent(id)}`),
+  /** `version` (the logo's `updated_at`) busts the cache after the image is replaced. */
+  logoUrl: (id: string, version = '') =>
+    `/api/logos/${encodeURIComponent(id)}/image${version ? `?v=${encodeURIComponent(version)}` : ''}`,
   assignments: () => request<{ assignments: Record<string, string> }>('GET', '/api/event/assignments'),
   setAssignments: (assignments: Record<string, string | null>) =>
     request<{ assignments: Record<string, string> }>('PUT', '/api/event/assignments', { assignments }),

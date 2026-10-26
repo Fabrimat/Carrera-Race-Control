@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef } from 'react'
 import { useFormat, useT } from '../../i18n/useT'
+import { CarLogo } from '../CarLogo'
 import { sortCars } from '../Leaderboard'
 import { towerCell, type GapMode } from '../../lib/tvTiming'
 import type { CarState, RaceState } from '../../lib/types'
@@ -108,6 +109,7 @@ export function TvTower({ race, codes, mode, reduced }: Props) {
                 {codes.get(c.address) ?? ''}
               </span>
               <span className="tv-mid">
+                <CarLogo logoId={c.logo_id} size="1.9em" className="tv-logo" />
                 <SectorPips car={c} race={race} />
                 {c.in_pit && <span className="tv-tag" data-tag="pit" data-testid="tv-pit">{t('tv.tower.pit')}</span>}
                 {isFastest && !isRecord && (

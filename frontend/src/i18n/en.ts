@@ -523,6 +523,25 @@ export const en = {
   'tv.results.qualifying': 'Qualifying classification',
 
   // ---- logos (roadmap wave 1): add keys only here
+  'logos.title': 'Brand logos',
+  'logos.hint': 'PNG, JPEG, WebP or SVG, up to 512 KB. Pick one per car in the list above; several cars can share a logo.',
+  'logos.empty': 'No logos yet.',
+  'logos.upload': 'Upload a logo',
+  'logos.name': 'Logo name',
+  'logos.rename': 'Rename {name}',
+  'logos.replace': 'Replace image',
+  'logos.replace_named': 'Replace the image of {name}',
+  'logos.delete': 'Delete',
+  'logos.delete_named': 'Delete {name}',
+  'logos.delete_confirm': 'Delete {name}? Cars using it lose their logo.',
+  'logos.delete_yes': 'Yes, delete',
+  'logos.car_logo': 'Logo',
+  'logos.none': 'No logo',
+  'logos.too_large': 'That file is larger than 512 KB.',
+  'logos.bad_type': 'Use a PNG, JPEG, WebP or SVG image.',
+  'error.logo_not_found': 'That logo no longer exists.',
+  'error.image_too_large': 'That image is too large.',
+  'error.invalid_image': 'That file is not an accepted image (PNG, JPEG, WebP or a plain SVG).',
 
   // ---- incidents, marshal calls (roadmap wave 1): add keys only here
   'event.incident_started': '{name} is off the track',
