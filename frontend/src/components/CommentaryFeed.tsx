@@ -1,8 +1,9 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useT } from '../i18n/useT'
 import { api } from '../lib/api'
 import { audioPlayer, saveVolume, loadVolume } from '../lib/audio'
 import { guarded } from '../lib/errors'
+import { PREFS_EVENT } from '../lib/shortcutActions'
 import { getSfxPrefs, setSfxEnabled, setSfxVolume } from '../lib/sfx'
 import { useStore } from '../lib/store'
 import type { CommentaryLine } from '../lib/types'
@@ -20,6 +21,16 @@ export function CommentaryFeed({ fill = false }: { fill?: boolean }) {
   const muted = useStore((s) => s.muted)
   const [volume, setVolume] = useState(loadVolume)
   const [sfx, setSfx] = useState(getSfxPrefs)
+
+  // Keyboard shortcuts change volume and effects behind this panel's back.
+  useEffect(() => {
+    const on = () => {
+      setVolume(loadVolume())
+      setSfx(getSfxPrefs())
+    }
+    window.addEventListener(PREFS_EVENT, on)
+    return () => window.removeEventListener(PREFS_EVENT, on)
+  }, [])
 
   const toggleMute = async () => {
     void audioPlayer.unlock()

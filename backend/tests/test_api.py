@@ -768,3 +768,23 @@ def test_validation_errors_do_not_echo_the_input(make_client) -> None:
     assert (response.status_code, response.json()["code"]) == (422, "invalid_request")
     assert body["image_base64"] not in response.text
     assert len(response.text) < 1000
+
+
+def test_settings_shortcuts_limits(make_client) -> None:
+    client = make_client()
+    body = client.get("/api/settings").json()
+
+    body["shortcuts"] = {"race.pace_car": "Shift+P", "race.stop": ""}
+    r = client.put("/api/settings", json=body)
+    assert r.status_code == 200
+    assert client.get("/api/settings").json()["shortcuts"] == body["shortcuts"]
+
+    body["shortcuts"] = {f"a{i}": "X" for i in range(101)}
+    r = client.put("/api/settings", json=body)
+    assert r.status_code == 422 and r.json()["code"] == "settings_invalid"
+
+    body["shortcuts"] = {"a" * 41: "X"}
+    assert client.put("/api/settings", json=body).json()["code"] == "settings_invalid"
+
+    body["shortcuts"] = {"a": "X" * 41}
+    assert client.put("/api/settings", json=body).json()["code"] == "settings_invalid"

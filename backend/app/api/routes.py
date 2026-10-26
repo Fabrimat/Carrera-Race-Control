@@ -122,6 +122,8 @@ async def get_settings(request: Request) -> SettingsResponse:
 
 MAX_CARS = 8
 MAX_CAR_NAME = 40
+MAX_SHORTCUTS = 100
+MAX_SHORTCUT_LEN = 40
 _COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 
@@ -139,6 +141,14 @@ def settings_errors(settings: Settings) -> list[str]:
             errors.append(f"Car {car.address}: name longer than {MAX_CAR_NAME} characters")
         if not _COLOR_RE.match(car.color):
             errors.append(f"Car {car.address}: color must look like #RRGGBB")
+    if len(settings.shortcuts) > MAX_SHORTCUTS:
+        errors.append(f"At most {MAX_SHORTCUTS} keyboard shortcuts are allowed")
+    for action, combo in settings.shortcuts.items():
+        if len(action) > MAX_SHORTCUT_LEN or len(combo) > MAX_SHORTCUT_LEN:
+            errors.append(
+                f"Keyboard shortcut ids and combos are at most {MAX_SHORTCUT_LEN} characters"
+            )
+            break
     return errors
 
 

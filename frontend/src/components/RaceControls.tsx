@@ -3,10 +3,9 @@ import { useT } from '../i18n/useT'
 import { api } from '../lib/api'
 import { guarded } from '../lib/errors'
 import { audioPlayer } from '../lib/audio'
+import { effectiveRaceConfig, isRaceActive, RACE_MODES, startRace } from '../lib/raceActions'
 import { useStore } from '../lib/store'
-import type { RaceConfig, RaceMode } from '../lib/types'
-
-const MODES: RaceMode[] = ['practice', 'laps', 'timed']
+import type { RaceMode } from '../lib/types'
 
 const btnFull =
   'rounded-md px-5 py-3 text-lg font-bold uppercase tracking-wide transition disabled:cursor-not-allowed disabled:opacity-35'
@@ -22,15 +21,15 @@ export function RaceControls({ compact = false }: { compact?: boolean }) {
   const field = compact ? fieldCompact : fieldFull
   const race = useStore((s) => s.race)
   const defaults = useStore((s) => s.settings?.race)
-  const [override, setOverride] = useState<Partial<RaceConfig>>({})
+  const override = useStore((s) => s.raceOverride)
+  const setOverride = useStore((s) => s.setRaceOverride)
   const [busy, setBusy] = useState(false)
-  const active = race.phase === 'starting' || race.phase === 'running' || race.phase === 'paused'
+  const active = isRaceActive(race)
   // While an event runs, the backend already holds the current session's spec as the race
   // config (also used by a START pressed on the CU): show it read-only, start without a body.
   const session = race.session ?? null
   // While a race is live, show the config it actually runs with.
-  const cfg: RaceConfig =
-    active || session ? race.config : { ...race.config, ...defaults, ...override }
+  const cfg = effectiveRaceConfig(race, defaults, override)
   const racing = race.phase === 'running' || race.phase === 'paused'
 
   const run = async (fn: () => Promise<unknown>) => {
@@ -41,7 +40,7 @@ export function RaceControls({ compact = false }: { compact?: boolean }) {
   }
   const numInput = (key: 'target_laps' | 'duration_s', v: string) => {
     const n = Math.max(1, Math.floor(Number(v) || 1))
-    setOverride((o) => ({ ...o, [key]: n }))
+    setOverride({ [key]: n })
   }
 
   return (
@@ -88,9 +87,9 @@ export function RaceControls({ compact = false }: { compact?: boolean }) {
               className={field}
               value={cfg.mode}
               disabled={active}
-              onChange={(e) => setOverride((o) => ({ ...o, mode: e.target.value as RaceMode }))}
+              onChange={(e) => setOverride({ mode: e.target.value as RaceMode })}
             >
-              {MODES.map((m) => (
+              {RACE_MODES.map((m) => (
                 <option key={m} value={m}>
                   {t(`mode.${m}`)}
                 </option>
@@ -130,7 +129,7 @@ export function RaceControls({ compact = false }: { compact?: boolean }) {
         <button
           className={`${btn} bg-go text-black`}
           disabled={active || busy}
-          onClick={() => void run(() => (session ? api.startRace() : api.startRace(cfg)))}
+          onClick={() => void run(() => startRace())}
         >
           {t('controls.start')}
         </button>

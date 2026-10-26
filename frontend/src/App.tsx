@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect } from 'react'
 import { Header } from './components/Header'
+import { ShortcutHelp } from './components/ShortcutHelp'
 import { Toasts } from './components/Toasts'
 import { useLanguage, useT } from './i18n/useT'
 import { api } from './lib/api'
@@ -7,6 +8,7 @@ import { connectionErrorMessage } from './lib/errors'
 import { refreshEventData } from './lib/eventData'
 import { useRoute } from './lib/route'
 import { useStore } from './lib/store'
+import { useShortcuts } from './lib/useShortcuts'
 import { wsClient } from './lib/ws'
 import { Dashboard } from './pages/Dashboard'
 
@@ -25,6 +27,8 @@ export default function App() {
   const language = useLanguage()
   const ws = useStore((s) => s.ws)
   const conn = useStore((s) => s.connection)
+
+  useShortcuts()
 
   useEffect(() => {
     wsClient.start()
@@ -85,6 +89,7 @@ export default function App() {
         </Suspense>
       </main>
       <Toasts />
+      <ShortcutHelp />
     </div>
   )
 }
