@@ -70,12 +70,25 @@ class RaceConfig(BaseModel):
     pits: PitRules = Field(default_factory=PitRules)
 
 
+class ControllerSettings(BaseModel):
+    """Per-controller values the app writes to the CU (docs/PROTOCOL.md "Roadmap wave 2").
+
+    Raw CU values 0..15 (carreralib setspeed / setbrake / setfuel). None = leave the CU's
+    own value untouched. Semantics on the real CU are still to be verified on the track.
+    """
+
+    speed: int | None = Field(default=None, ge=0, le=15)
+    brake: int | None = Field(default=None, ge=0, le=15)
+    fuel: int | None = Field(default=None, ge=0, le=15)
+
+
 class CarConfig(BaseModel):
     address: int = Field(ge=0, le=7)
     name: str
     color: str = "#888888"  # CSS hex color
     nickname: str | None = None  # how the commentator calls the driver
     logo_id: str | None = None  # Logo.id from the logo library (GET /api/logos/{id}/image)
+    controller: ControllerSettings = Field(default_factory=ControllerSettings)  # wave 2
 
 
 DEFAULT_CAR_COLORS = ["#e53935", "#1e88e5", "#43a047", "#fdd835", "#8e24aa", "#fb8c00"]
@@ -218,6 +231,18 @@ class SessionInfo(BaseModel):
     total: int  # number of sessions in the program
 
 
+class PairingState(BaseModel):
+    """The car <-> controller pairing wizard (CU CODE button), see PROTOCOL "Pairing"."""
+
+    phase: Literal["waiting", "paired", "timeout", "cancelled", "failed"]
+    target_address: int = Field(ge=0, le=5)  # the controller the user is coding the car to
+    car: CarConfig  # the car profile to store at that address once paired
+    started_at: datetime
+    expires_at: datetime
+    detected_address: int | None = None  # address of the first crossing seen
+    error: str | None = None  # English, for logs (failed)
+
+
 class RaceState(BaseModel):
     race_id: int | None = None
     phase: RacePhase = RacePhase.IDLE
@@ -235,6 +260,7 @@ class RaceState(BaseModel):
     num_sectors: int = 1  # 1 + number of Check Lane sensors (layout-declared or seen)
     best_sectors: list[int | None] = Field(default_factory=list)  # overall best per sector
     session: SessionInfo | None = None  # set while an event program is running
+    pairing: PairingState | None = None  # wave 2: the pairing wizard, while not idle
 
 
 # --------------------------------------------------------------------------- events
@@ -386,6 +412,15 @@ class PitMissed(_EventBase):
     penalty_ms: int
 
 
+class CarPaired(_EventBase):
+    """The pairing wizard saw the coded car cross the line."""
+
+    type: Literal["car_paired"] = "car_paired"
+    address: int
+    name: str
+    matches_target: bool  # False: the car answered on another controller than chosen
+
+
 RaceEvent = Annotated[
     RaceStarted
     | LapCompleted
@@ -403,7 +438,8 @@ RaceEvent = Annotated[
     | SessionFinished
     | IncidentStarted
     | IncidentCleared
-    | PitMissed,
+    | PitMissed
+    | CarPaired,
     Field(discriminator="type"),
 ]
 
@@ -509,6 +545,30 @@ class LayoutDraft(BaseModel):
     notes: str = ""  # model's remarks (e.g. "start line guessed"), in the UI language
 
 
+# --------------------------------------------------------------------------- controllers
+
+
+class ControllerStatus(BaseModel):
+    """GET /api/controllers: what the app wants on each controller and what it last wrote."""
+
+    address: int
+    effective: ControllerSettings  # car settings with the assigned driver's overrides
+    applied: ControllerSettings | None = None  # last values written successfully, None = never
+    pending: bool = False  # effective differs from applied (waits for connect / race end)
+    driver_id: str | None = None  # whose profile is in effect, if any
+
+
+class GarageCar(BaseModel):
+    """GET /api/garage: a car with its all-time stats from the race history."""
+
+    address: int
+    car: CarConfig
+    races: int = 0
+    laps: int = 0
+    best_lap_ms: int | None = None  # all-time best valid lap on any layout
+    best_lap_layout: str | None = None
+
+
 # --------------------------------------------------------------------------- logos
 
 
@@ -532,6 +592,9 @@ class Driver(BaseModel):
     nickname: str | None = Field(default=None, max_length=24)
     bio: str = Field(default="", max_length=300)  # facts the AI commentator may use
     has_photo: bool = False  # avatar stored by the backend (GET /api/drivers/{id}/photo)
+    # Handicap profile (wave 2): non-null fields override the car's controller settings
+    # while this driver is assigned to it.
+    controller: ControllerSettings | None = None
     created_at: datetime = Field(default_factory=utcnow)
 
 

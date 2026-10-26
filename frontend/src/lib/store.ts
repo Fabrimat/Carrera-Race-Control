@@ -51,6 +51,7 @@ export const emptyRace: RaceState = {
   num_sectors: 1,
   best_sectors: [],
   session: null,
+  pairing: null,
 }
 
 export const emptyConnection: ConnectionInfo = {

@@ -658,4 +658,11 @@ export const en = {
   'shortcuts.conflict': 'Also used by: {others}. Only the first one in this list will run.',
   'shortcuts.problem.invalid': 'This key cannot be used (modifier only, AltGr or dead key).',
   'shortcuts.problem.reserved': 'The browser reserves this combination; pick another one.',
+
+  // ---- responsive layouts, pit wall (roadmap wave 2): add keys only here
+
+  // ---- controller settings, pairing, garage (roadmap wave 2): add keys only here
+  'event.car_paired': '{name} is paired with controller {controller}',
+
+  // ---- webcam tracking (roadmap wave 2): add keys only here
 }

@@ -31,12 +31,47 @@ export interface RaceConfig {
   pits: PitRules
 }
 
+// Raw CU values 0..15; null = leave the CU's own value (PROTOCOL "Roadmap wave 2").
+export interface ControllerSettings {
+  speed: number | null
+  brake: number | null
+  fuel: number | null
+}
+
 export interface CarConfig {
   address: number
   name: string
   color: string
   nickname: string | null
   logo_id: string | null // Logo.id, image at api.logoUrl(id)
+  controller: ControllerSettings
+}
+
+export interface PairingState {
+  phase: 'waiting' | 'paired' | 'timeout' | 'cancelled' | 'failed'
+  target_address: number
+  car: CarConfig
+  started_at: string
+  expires_at: string
+  detected_address: number | null
+  error: string | null
+}
+
+export interface ControllerStatus {
+  address: number
+  effective: ControllerSettings
+  applied: ControllerSettings | null
+  pending: boolean
+  driver_id: string | null
+}
+
+export interface GarageCar {
+  address: number
+  car: CarConfig
+  races: number
+  laps: number
+  best_lap_ms: number | null
+  best_lap_layout: string | null
 }
 
 export interface Lap {
@@ -178,6 +213,7 @@ export interface RaceState {
   num_sectors: number
   best_sectors: (number | null)[]
   session: SessionInfo | null
+  pairing: PairingState | null // wave 2: pairing wizard, while not idle
 }
 
 // ------------------------------------------------------------------ events
@@ -273,6 +309,7 @@ export type RaceEvent =
       by: 'crossing' | 'marshal' | 'race_end'
       lost_ms: number
     })
+  | (EventBase & { type: 'car_paired'; address: number; name: string; matches_target: boolean })
   | (EventBase & {
       type: 'pit_missed'
       address: number
@@ -406,6 +443,7 @@ export interface Driver {
   nickname: string | null
   bio: string
   has_photo: boolean
+  controller: ControllerSettings | null // handicap profile, overrides the car's
   created_at: string
 }
 

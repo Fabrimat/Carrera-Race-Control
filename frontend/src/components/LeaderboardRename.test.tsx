@@ -13,8 +13,8 @@ describe('Leaderboard inline rename', () => {
       language: 'en',
       settings: settingsResponse({
         cars: [
-          { address: 0, name: 'Car 1', color: '#e53935', nickname: 'Speedy', logo_id: null },
-          { address: 1, name: 'Car 2', color: '#1e88e5', nickname: null, logo_id: null },
+          { address: 0, name: 'Car 1', color: '#e53935', nickname: 'Speedy', logo_id: null, controller: { speed: null, brake: null, fuel: null } },
+          { address: 1, name: 'Car 2', color: '#1e88e5', nickname: null, logo_id: null, controller: { speed: null, brake: null, fuel: null } },
         ],
       }),
     })

@@ -453,3 +453,110 @@ select or contenteditable, nor while a modal other than the help overlay is open
 Enter on a focused button, link or `[role=button]` are left to that element; handled
 combos call `preventDefault`. Destructive actions (stop, reset, disconnect) default to
 combos with a modifier (e.g. `Ctrl+Shift+R`).
+
+## Roadmap wave 2
+
+Controller settings and pairing (docs/ROADMAP.md §4 and the CU fuel writes of §3), webcam
+tracking prototype (§1), responsive layouts (§5). Shapes in `models.py`:
+`ControllerSettings`, `CarConfig.controller`, `Driver.controller`, `PairingState`,
+`RaceState.pairing`, `CarPaired` (`car_paired`), `ControllerStatus`, `GarageCar`. All new
+fields have defaults. Everything is testable on the simulator; the real CU is tested at the
+end of the roadmap.
+
+### Controller settings (speed, brake, fuel)
+
+The CU keeps a speed, brake and fuel value (raw 0..15) per controller, written with
+carreralib `setspeed` / `setbrake` / `setfuel` (`setword` 0 / 1 / 2, repeat 2). The CU
+does not report them back. Their exact effect on the real CU (direction of the scale, tank
+level vs consumption for fuel) is **to be verified on the track**; the UI shows the raw
+0..15 value with that note.
+
+- `TrackInterface` gains `set_speed(address, value)`, `set_brake(address, value)`,
+  `set_fuel(address, value)` and `press_code()` (CU CODE button, `CODE_BUTTON_ID`). They
+  go through the same command queue as `start()`; values outside 0..15 or addresses
+  outside 0..5 raise `ValueError` before anything is sent.
+- **Effective settings** per address: start from `CarConfig.controller`; if a driver is
+  assigned to that address (event mode) and `Driver.controller` is set, each of its
+  non-null fields replaces the car's. Null fields are never written.
+- **When the controller writes**: on connect (after the first Status), after
+  `PUT /api/settings`, after a driver (un)assignment or a driver profile change, and on
+  `POST /api/controllers/apply`. Never while the race is STARTING, RUNNING or PAUSED:
+  changes made then stay `pending` and are written when the race finishes or is reset.
+  Only fields that differ from the last successful write (`applied`) are sent, except
+  on connect, when everything non-null is sent (the CU may have been power-cycled). A
+  failed write is logged and leaves the address `pending`; it is never raised to the
+  request that triggered it.
+- **Simulator**: speed scales the car's pace (15 = unchanged, each step below adds 4 %
+  to its lap time), brake is accepted and ignored, fuel sets the car's tank level
+  immediately (an assumption, documented in `simulator.py`).
+
+| Method | Path | Body | Response |
+|---|---|---|---|
+| GET | `/api/controllers` | – | `{"controllers": ControllerStatus[]}` addresses 0..5 |
+| POST | `/api/controllers/apply` | – | same, after writing every pending address (409 `not_connected` without a track; 409 `busy` during a race) |
+
+Driver profiles are edited through the existing `PUT /api/drivers/{id}` (field
+`controller`); car settings through `PUT /api/settings` (`cars[].controller`).
+
+### Pairing (car ↔ controller)
+
+Carrera coding: press CODE on the CU, put the car on the track and press the lane-change
+button on the controller it should answer to. The app drives that from a wizard:
+
+| Method | Path | Body | Response |
+|---|---|---|---|
+| POST | `/api/pairing` | `{"target_address": 0..5, "car": CarConfig}` | `PairingState` (phase `waiting`); presses CODE once |
+| DELETE | `/api/pairing` | – | `PairingState` (phase `cancelled`) or 404 `not_found` if none |
+
+- Allowed only with a connected track (409 `not_connected`) and while the race is IDLE or
+  FINISHED (409 `busy`); a second POST while `waiting` replaces the first (CODE is pressed
+  again). `car.address` is ignored and set to `target_address`.
+- While `waiting` (60 s, `expires_at`), the first sensor-1 crossing of any address
+  completes it: `detected_address` is set, phase `paired`, event `car_paired` with
+  `matches_target = detected == target`, and the `car` profile (name, colour, nickname,
+  logo, controller settings) is stored in settings at the **detected** address (replacing
+  that car), then its controller settings are written. That crossing is not a lap (no
+  race is running). After 60 s: phase `timeout`. A failing CODE press: phase `failed`.
+- `RaceState.pairing` carries the state while `waiting` and for 10 s after it ended (so the
+  UI can show the result), then null. Not persisted.
+- Simulator: `press_code()` is accepted; the next crossing pairs (any car), so the flow is
+  testable end to end.
+
+### Garage
+
+| Method | Path | Body | Response |
+|---|---|---|---|
+| GET | `/api/garage` | – | `{"cars": GarageCar[]}` one per configured car, by address |
+
+Stats come from the race history (store): races the address took part in (it has at least
+one lap), total laps, all-time best valid lap and its layout.
+
+### Webcam tracking (prototype)
+
+Frontend only in this wave, no new dependency, video never leaves the browser.
+- Page `#/camera`: source = a webcam (`getUserMedia`) or a **simulated camera** that renders
+  the live race (layout path + car dots from the live positions) into a canvas with a
+  perspective tilt, lighting gradient and noise, so everything is testable on the
+  simulator.
+- Calibration: the user clicks 4+ points on the image and matches them to points of the
+  current layout (start line first); a homography (DLT, normalised) maps image → layout
+  coordinates; the reprojection error is shown. Stored per layout name in `localStorage`
+  (key `carrera.camera.<layout>`), exportable as JSON.
+- Car signatures: per car, click it in the frame (or drive it past) to sample a colour
+  signature (hue/saturation histogram, robust to brightness).
+- Tracking: downscaled frames (e.g. 320 px wide) at up to 15 fps; background model
+  (running average) for motion, then colour matching per car, blob centroid → homography →
+  nearest point of the layout path (`s`); outliers (jumps backwards beyond a tolerance, off
+  the path beyond a distance) are rejected. Stats per car: detection rate, last seen, fps.
+- Output: a client store slice `camera` (per address: `s`, `seen_at`, `off_path`) that the
+  dashboard and TV `TrackMap` use, while fresh (< 500 ms), instead of the estimated `s`
+  (dot drawn as "measured"). Sending positions or camera incidents to the backend is a
+  later wave.
+
+### Responsive layouts
+
+One shared breakpoint module for the dashboard and TV mode. The 16:9 layouts at 1920×1080
+and 1366×768 stay as they are (no scrolling). Added: ultrawide (21:9) and 4K (bigger map,
+more columns), tablet landscape and portrait (touch-sized controls, collapsible panels),
+and phones as a **pit wall** (race controls, leaderboard and latest commentary; map on
+tap).

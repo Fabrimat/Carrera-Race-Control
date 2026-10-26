@@ -66,6 +66,8 @@ export function describeEvent(
       return t('event.incident_cleared', { name: name(e.address) })
     case 'pit_missed':
       return t('event.pit_missed', { name: name(e.address), stops: e.stops, required: e.required })
+    case 'car_paired':
+      return t('event.car_paired', { name: e.name, controller: e.address + 1 })
   }
 }
 

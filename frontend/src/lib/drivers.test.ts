@@ -20,6 +20,7 @@ const d = (id: string, name: string, nickname: string | null = null): Driver => 
   nickname,
   bio: '',
   has_photo: false,
+  controller: null,
   created_at: '2026-01-01T00:00:00Z',
 })
 

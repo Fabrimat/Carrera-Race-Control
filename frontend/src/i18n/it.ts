@@ -658,4 +658,11 @@ export const it: Messages = {
   'shortcuts.conflict': 'Usata anche da: {others}. Funzionerà solo la prima di questo elenco.',
   'shortcuts.problem.invalid': 'Questo tasto non si può usare (solo modificatore, AltGr o tasto morto).',
   'shortcuts.problem.reserved': "Il browser riserva questa combinazione: scegline un'altra.",
+
+  // ---- responsive layouts, pit wall (roadmap wave 2): add keys only here
+
+  // ---- controller settings, pairing, garage (roadmap wave 2): add keys only here
+  'event.car_paired': '{name} è abbinata alla pulsantiera {controller}',
+
+  // ---- webcam tracking (roadmap wave 2): add keys only here
 }
