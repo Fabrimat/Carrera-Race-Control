@@ -1,9 +1,12 @@
 # Roadmap
 
 Status (2026-10-26): wave 1 done — logos (§2), incidents without webcam (§1, last part),
-fuel strategy and mandatory pit stops (§3, read-only: no CU fuel writes), keyboard
-shortcuts (§6). Still open: webcam tracking (§1), pairing and speed/brake profiles (§4),
-responsive panel (§5).
+fuel strategy and mandatory pit stops (§3), keyboard shortcuts (§6). Wave 2 done —
+webcam tracking prototype (§1, browser-side, simulated camera), car↔controller pairing,
+per-car / per-driver speed, brake and fuel values written to the CU, garage (§4, §3 fuel
+writes), responsive layouts and phone pit wall (§5), desktop builds for macOS and Linux.
+Still to do: the test session on the real track (CU writes, pairing, auto pace car,
+incident thresholds, webcam on the real track), then camera incidents sent to the backend.
 
 Ideas requested by the user for after the current work (sectors, track map, 16:9
 control panel). Each item notes what the hardware and libraries can actually do, so

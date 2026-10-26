@@ -24,6 +24,9 @@ Desktop builds are attached to every [release](https://github.com/Fabrimat/Carre
 - **Fuel strategy**: in the CU's fuel mode, laps left per car, "pit by lap N" warnings and a fuel chart; optional mandatory pit stops with penalties.
 - **Car brand logos**: a logo library (PNG, JPEG, WebP, SVG) shown in the leaderboard, TV tower and history.
 - **Keyboard shortcuts** for every main action, a `?` help overlay, rebinding in Settings.
+- **Garage and controller settings**: per car (and per driver, as a handicap profile) speed, brake and fuel values written to the Control Unit, a guided car ↔ controller pairing wizard, all-time stats per car.
+- **Webcam tracking (prototype)**: calibrate a webcam against the drawn layout, sample each car's colour, and the live map shows measured positions; the video never leaves the browser. A simulated camera makes it testable without a track.
+- **Responsive**: 16:9 control panel, ultrawide and 4K layouts, tablets, and a phone "pit wall".
 - Race history with CSV and JSON export; raw session recording and replay.
 - Robust connection handling: reconnect with backoff, clear error messages (for example "close the Carrera app").
 - Interface and commentary in English and Italian. A built-in simulator for everything without a track.
