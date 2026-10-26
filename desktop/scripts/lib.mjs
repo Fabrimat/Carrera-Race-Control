@@ -23,8 +23,23 @@ export function run(cmd, args, cwd) {
   }
 }
 
-// sysconfig.get_platform() reflects the interpreter build (platform.machine() reports the host under emulation)
-const PY_ARCH = { 'win-amd64': 'x64', 'win-arm64': 'arm64' }
+// sysconfig.get_platform() reflects the interpreter build (platform.machine() reports the host under emulation):
+// win-amd64, win-arm64, linux-x86_64, linux-aarch64, macosx-13.0-x86_64, macosx-14.0-arm64, macosx-11.0-universal2
+function archFromPlatform(machine) {
+  if (/(^|[-_])(amd64|x86_64)$/.test(machine)) return 'x64'
+  if (/(^|[-_])(arm64|aarch64)$/.test(machine)) return 'arm64'
+  return undefined // includes universal2: the PyInstaller output would not match one electron-builder arch
+}
+
+/** Operating system key used by electron-builder: win, mac or linux. */
+export const hostOs = { win32: 'win', darwin: 'mac', linux: 'linux' }[process.platform]
+
+/** uv python id (for `uv python install` / UV_PYTHON) of a 3.12 build for the host OS and `arch`. */
+export function pythonId(arch) {
+  const cpu = arch === 'arm64' ? 'aarch64' : 'x86_64'
+  const os = { win: 'windows', mac: 'macos', linux: 'linux' }[hostOs]
+  return `cpython-3.12-${os}-${cpu}`
+}
 
 /** Architecture of the Python uv uses for the backend (it decides the PyInstaller output arch). */
 export function pythonArch() {
@@ -37,7 +52,7 @@ export function pythonArch() {
       ? spawnSync(exe, ['-c', 'import sysconfig;print(sysconfig.get_platform())'], { encoding: 'utf8' })
       : found
   const machine = (res.stdout || '').trim().split(/\r?\n/).pop()
-  const arch = PY_ARCH[machine]
+  const arch = archFromPlatform(machine)
   if (res.status !== 0 || !arch) {
     console.error(`could not detect the backend Python architecture (got "${machine}")
 ${res.stderr || ''}`)
@@ -61,7 +76,7 @@ export function targetArch(argv = process.argv.slice(2)) {
   const py = pythonArch()
   const arch = wanted ?? py
   if (arch !== py) {
-    const id = arch === 'arm64' ? 'cpython-3.12-windows-aarch64' : 'cpython-3.12-windows-x86_64'
+    const id = pythonId(arch)
     console.error(
       `cannot build ${arch}: the backend Python is ${py} and PyInstaller cannot cross-compile.
 ` +

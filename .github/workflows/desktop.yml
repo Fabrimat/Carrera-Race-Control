@@ -24,20 +24,45 @@ permissions:
 
 jobs:
   build:
-    name: Windows ${{ matrix.arch }}
+    name: ${{ matrix.os-name }} ${{ matrix.arch }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     strategy:
+      # a failing macOS or Linux job must not block the Windows installers
       fail-fast: false
       matrix:
         include:
-          - arch: x64
+          - os-name: Windows
+            os: win
+            arch: x64
             runner: windows-latest
             python-arch: x64
-          - arch: arm64
+          - os-name: Windows
+            os: win
+            arch: arm64
             # PyInstaller cannot cross-compile: ARM64 must build natively. Override with the
             # repository variable ARM64_RUNNER (e.g. a larger-runner group label or self-hosted).
             runner: ${{ vars.ARM64_RUNNER || 'windows-11-arm' }}
+            python-arch: arm64
+          - os-name: macOS
+            os: mac
+            arch: x64
+            runner: macos-15-intel # Intel (macos-13 was retired by GitHub)
+            python-arch: x64
+          - os-name: macOS
+            os: mac
+            arch: arm64
+            runner: macos-14 # Apple Silicon
+            python-arch: arm64
+          - os-name: Linux
+            os: linux
+            arch: x64
+            runner: ubuntu-latest
+            python-arch: x64
+          - os-name: Linux
+            os: linux
+            arch: arm64
+            runner: ubuntu-24.04-arm
             python-arch: arm64
     steps:
       - uses: actions/checkout@v7
@@ -64,7 +89,7 @@ jobs:
           cache-dependency-glob: backend/uv.lock
 
       - name: Backend tests
-        if: matrix.arch == 'x64'
+        if: matrix.os == 'win' && matrix.arch == 'x64'
         working-directory: backend
         env:
           UV_PYTHON: ${{ steps.py.outputs.python-path }}
@@ -73,11 +98,19 @@ jobs:
           uv run pytest -q
 
       - name: Frontend tests
-        if: matrix.arch == 'x64'
+        if: matrix.os == 'win' && matrix.arch == 'x64'
         working-directory: frontend
         run: |
           pnpm install --frozen-lockfile
           pnpm exec vitest run
+
+      # electron-builder only ships an x86_64 fpm (used for .deb): use the system one on ARM64.
+      - name: Install fpm (Linux ARM64)
+        if: matrix.os == 'linux' && matrix.arch == 'arm64'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ruby ruby-dev build-essential
+          sudo gem install --no-document fpm
 
       - name: Install desktop dependencies
         working-directory: desktop
@@ -95,31 +128,53 @@ jobs:
           CARRERA_ARCH: ${{ matrix.arch }}
           UV_PYTHON: ${{ steps.py.outputs.python-path }}
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          USE_SYSTEM_FPM: ${{ matrix.os == 'linux' && matrix.arch == 'arm64' && 'true' || 'false' }}
         run: npm run dist
 
+      # Windows keeps its original artifact names.
       - uses: actions/upload-artifact@v7
+        if: matrix.os == 'win'
         with:
           name: Carrera-Race-Control-Setup-${{ matrix.arch }}
           path: desktop/release/Carrera-Race-Control-Setup-*-${{ matrix.arch }}.exe
           if-no-files-found: error
 
+      - uses: actions/upload-artifact@v7
+        if: matrix.os == 'mac'
+        with:
+          name: Carrera-Race-Control-macOS-${{ matrix.arch }}
+          path: |
+            desktop/release/Carrera-Race-Control-*-mac-${{ matrix.arch }}.dmg
+            desktop/release/Carrera-Race-Control-*-mac-${{ matrix.arch }}.zip
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v7
+        if: matrix.os == 'linux'
+        with:
+          name: Carrera-Race-Control-Linux-${{ matrix.arch }}
+          path: |
+            desktop/release/Carrera-Race-Control-*-linux-${{ matrix.arch }}.AppImage
+            desktop/release/Carrera-Race-Control-*-linux-${{ matrix.arch }}.deb
+          if-no-files-found: error
+
   release:
     name: GitHub Release
     needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
+    # run even when a non-Windows job failed: attach whatever was built
+    if: ${{ !cancelled() && startsWith(github.ref, 'refs/tags/v') }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/download-artifact@v8
         with:
-          pattern: Carrera-Race-Control-Setup-*
+          pattern: Carrera-Race-Control-*
           path: dist
           merge-multiple: true
 
       # Idempotent: the same tag can trigger this workflow from the tag push and from the
       # "release published" event; create the release only if it does not exist, then upload.
-      - name: Create the release if missing and attach the installers
+      - name: Create the release if missing and attach the installers and packages
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
@@ -127,4 +182,7 @@ jobs:
           if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TAG" --generate-notes --verify-tag
           fi
-          gh release upload "$TAG" dist/*.exe --repo "$GITHUB_REPOSITORY" --clobber
+          shopt -s nullglob # a failed non-Windows job leaves no files of its type
+          files=(dist/*.exe dist/*.dmg dist/*.zip dist/*.AppImage dist/*.deb)
+          if [ ${#files[@]} -eq 0 ]; then echo "no installers to upload"; exit 1; fi
+          gh release upload "$TAG" "${files[@]}" --repo "$GITHUB_REPOSITORY" --clobber

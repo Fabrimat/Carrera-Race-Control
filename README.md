@@ -10,7 +10,7 @@ This is an unofficial tool. See the [trademark notice](#trademarks).
 
 ## Download
 
-Windows installers (x64 and ARM64) are attached to every [release](https://github.com/Fabrimat/Carrera-Race-Control/releases). The installer lets you choose the folder and whether to install for yourself or all users; see [Desktop app](#desktop-app-windows).
+Desktop builds are attached to every [release](https://github.com/Fabrimat/Carrera-Race-Control/releases): Windows installers (x64 and ARM64), macOS (`.dmg` / `.zip`, Intel and Apple Silicon) and Linux (`.AppImage` / `.deb`, x64 and ARM64). See [Desktop app](#desktop-app-windows-macos-linux).
 
 ## Features
 
@@ -115,9 +115,9 @@ uv run python -m app     # serves the API and the built dashboard on http://127.
 
 `uv run uvicorn app.main:app` works too (it serves `frontend/dist` when it exists).
 
-## Desktop app (Windows)
+## Desktop app (Windows, macOS, Linux)
 
-`desktop/` is an Electron shell that runs the whole app as a normal Windows program: it starts the backend on a free `127.0.0.1` port, opens the dashboard in a window and shuts everything down when you quit. The packaged app contains the backend built with PyInstaller, so Python, Node and uv are not needed on the target PC.
+`desktop/` is an Electron shell that runs the whole app as a normal desktop program on Windows, macOS and Linux: it starts the backend on a free `127.0.0.1` port, opens the dashboard in a window and shuts everything down when you quit. The packaged app contains the backend built with PyInstaller, so Python, Node and uv are not needed on the target computer.
 
 Build requirements: Node.js 22, Python with uv (as in the Quick start), no global tools.
 
@@ -125,22 +125,27 @@ Build requirements: Node.js 22, Python with uv (as in the Quick start), no globa
 cd desktop
 npm install
 npm run dev        # builds the shell, starts the local backend (uv run python -m app), opens the window
-npm run dist       # frontend build + PyInstaller backend + NSIS installer
+npm run dist       # frontend build + PyInstaller backend + installer for the host OS
 ```
 
-`npm run dist` writes the installer to `desktop/release/Carrera-Race-Control-Setup-<version>-<arch>.exe` (`x64` or `arm64`, the host architecture). The installer (English or Italian, from the Windows language) lets you install for the current user only (no admin rights) or for all users, and choose the installation folder; it creates desktop and Start menu shortcuts. The PyInstaller step alone is `npm run build:backend` (output in `backend/build/pyi-dist/`, spec in `backend/packaging/`). The backend also accepts `--host` and `--port` (`python -m app --port 9000`). `npm run smoke` launches the app with Playwright and checks the backend, the TV window, the configuration window and that no backend process is left.
+`npm run dist` builds for the host OS and architecture (`x64` or `arm64`; PyInstaller cannot cross-compile, so build each OS on that OS) into `desktop/release/`: Windows `Carrera-Race-Control-Setup-<version>-<arch>.exe`, macOS `Carrera-Race-Control-<version>-mac-<arch>.dmg` and `.zip`, Linux `Carrera-Race-Control-<version>-linux-<arch>.AppImage` and `.deb`. The installer (English or Italian, from the Windows language) lets you install for the current user only (no admin rights) or for all users, and choose the installation folder; it creates desktop and Start menu shortcuts. The PyInstaller step alone is `npm run build:backend` (output in `backend/build/pyi-dist/`, spec in `backend/packaging/`). The backend also accepts `--host` and `--port` (`python -m app --port 9000`). `npm run smoke` launches the app with Playwright and checks the backend, the TV window, the configuration window and that no backend process is left.
 
 **TV window.** Menu Window, "Open TV window" (or Ctrl+Shift+T) opens `#/tv` fullscreen and frameless on another monitor: the default is the first non-primary display, "Open TV window on..." lists all displays and remembers the choice. Esc leaves fullscreen, Ctrl+Shift+W (or Ctrl+Shift+T again) closes it. Only one TV window exists, the mouse cursor hides after 3 s, and if the monitor is unplugged the window moves back to the primary display. The page can do the same through `window.carreraDesktop` (`openTvWindow(displayId?)`, `listDisplays()`, `closeTvWindow()`, `setKeys()`, `getKeysStatus()`); the types are in `desktop/types/carrera-desktop.d.ts`.
 
 **Configuration.** There is no `.env` in the packaged app: File, "Configuration..." (also reachable from the page with `carreraDesktop.openConfig()`) edits every variable of `.env.example` in English or Italian, grouped as API keys, voice and models, track, simulator, commentary, network and advanced. Empty fields use the default shown in the field, with a "Reset to default" link; values are validated like the backend does (types, ranges, comma separated lists). Secrets (`*_API_KEY`) are encrypted with Electron `safeStorage` (Windows DPAPI, tied to your Windows user) in `keys.enc.json` and only shown as configured or not, with replace and remove; everything else is in `config.json`. All values reach the backend only through its process environment, never the dashboard or TV windows, and are never logged. Saving restarts the backend. `DATA_DIR` is managed by the app (read-only, with an "Open folder" button). The app's own address is always added to `ALLOWED_HOSTS` and `CORS_ORIGINS`. If secure storage is unavailable, secrets are not stored. File, "Import from .env file..." migrates an existing `.env` once (secrets are stored encrypted, the file is not kept). The field list is one table, `desktop/src/config-schema.ts`; `npm run check:env` (part of `npm run build`) fails when `.env.example` or `AppConfig` has a variable missing from it, so add one line there for every new variable.
 
-**Where data lives.** `%APPDATA%\Carrera Race Control\`: `data\` (SQLite database and TTS cache, the `DATA_DIR` of the backend), `logs\backend.log`, `keys.enc.json`, `config.json`, `desktop-prefs.json` (chosen TV display). The File menu opens the data and logs folders. If the backend crashes it is restarted with a growing delay and the window shows a status page meanwhile. The installer is not code signed, so SmartScreen may warn on first run.
+**Per-OS notes.**
 
+- **Windows.** The installer is not code signed, so SmartScreen may warn on first run ("More info", "Run anyway").
+- **macOS.** The app is not signed or notarized (no Apple developer account). Open the `.dmg`, drag the app to Applications, then the first time right-click the app, choose Open and confirm; or run `xattr -dr com.apple.quarantine "/Applications/Carrera Race Control.app"`. On first start macOS asks for Bluetooth permission (needed to reach the Control Unit); if you denied it, enable it in System Settings, Privacy and Security, Bluetooth. Pick the `x64` build on Intel Macs and `arm64` on Apple Silicon.
+- **Linux.** Bluetooth uses BlueZ over D-Bus: `bluez` must be installed and running (`sudo systemctl enable --now bluetooth`), and your user should be allowed to use it (usually no extra step on desktop distributions; otherwise add yourself to the `bluetooth` group: `sudo usermod -aG bluetooth $USER`, then log out and in). `.deb`: `sudo apt install ./Carrera-Race-Control-<version>-linux-<arch>.deb`. AppImage: `chmod +x Carrera-Race-Control-*.AppImage && ./Carrera-Race-Control-*.AppImage` (needs FUSE 2, package `libfuse2`; on Ubuntu 24.04 use `--appimage-extract-and-run` if FUSE is missing). If the window does not open from the AppImage on a restricted kernel, add `--no-sandbox`.
+
+**Where data lives.** Windows `%APPDATA%\Carrera Race Control\`, macOS `~/Library/Application Support/Carrera Race Control/`, Linux `~/.config/Carrera Race Control/` (Electron `userData`): `data\` (SQLite database and TTS cache, the `DATA_DIR` of the backend), `logs\backend.log`, `keys.enc.json`, `config.json`, `desktop-prefs.json` (chosen TV display). The File menu opens the data and logs folders. If the backend crashes it is restarted with a growing delay and the window shows a status page meanwhile. 
 ### CI builds
 
-`.github/workflows/desktop.yml` builds the installer for **x64** (`windows-latest`) and **ARM64** (`windows-11-arm`) on every push to `main` that touches `desktop/`, `backend/` or `frontend/`, on pull requests, on `v*` tags, when a release is published and on manual runs. Backend and frontend tests run on the x64 job. Download the installers from the run's **Artifacts** (`Carrera-Race-Control-Setup-x64`, `-arm64`).
+`.github/workflows/desktop.yml` builds the desktop app for Windows **x64** (`windows-latest`) and **ARM64** (`windows-11-arm`), macOS **x64** (`macos-15-intel`) and **arm64** (`macos-14`), and Linux **x64** (`ubuntu-latest`) and **arm64** (`ubuntu-24.04-arm`) on every push to `main` that touches `desktop/`, `backend/` or `frontend/`, on pull requests, on `v*` tags, when a release is published and on manual runs. Backend and frontend tests run on the x64 job. Jobs are independent (a failing macOS or Linux job does not block the Windows installers). Download the files from the run's **Artifacts** (`Carrera-Race-Control-Setup-x64` / `-arm64`, `Carrera-Race-Control-macOS-x64` / `-arm64`, `Carrera-Race-Control-Linux-x64` / `-arm64`).
 
-**Releases.** Push a tag (`git tag v0.2.0 && git push origin v0.2.0`) or publish a release in the GitHub UI or with `gh release create`: both installers are attached to that release (it is created if missing, existing assets are replaced, so running both triggers is safe). The installer version is the tag without the leading `v`.
+**Releases.** Push a tag (`git tag v0.2.0 && git push origin v0.2.0`) or publish a release in the GitHub UI or with `gh release create`: every installer and package is attached to that release (it is created if missing, existing assets are replaced, so running both triggers is safe). The installer version is the tag without the leading `v`.
 
 **ARM64.** PyInstaller cannot cross-compile, so the ARM64 installer is built natively on an ARM64 runner with ARM64 Python and Electron. `windows-11-arm` is a GitHub-hosted runner for public and private repositories (private repositories use the plan's minutes). To use another runner, set the repository variable `ARM64_RUNNER`. `windows-curses` (only used by carreralib's terminal UI) has no ARM64 wheel, so it is skipped there; the app never uses it. Locally: `npm run dist:arm64` on an ARM64 PC, `npm run dist:x64` on x64.
 
@@ -279,7 +284,7 @@ backend/
 frontend/
   src/                     React + TypeScript + Vite + Tailwind + Zustand + Recharts
   e2e/                     Playwright smoke test
-desktop/                   Electron shell (Windows app), TV window, configuration window
+desktop/                   Electron shell (Windows, macOS, Linux app), TV window, configuration window
 docs/PROTOCOL.md           REST and WebSocket contract
 docs/ROADMAP.md            what comes next
 ```

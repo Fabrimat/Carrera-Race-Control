@@ -14,7 +14,7 @@ export type BackendState = 'stopped' | 'starting' | 'ready' | 'restarting' | 'fa
 
 /**
  * Owns the Python backend process: free port, health check, restart with backoff and a
- * kill that cannot leave an orphan (taskkill /T on Windows).
+ * kill that cannot leave an orphan (taskkill /T on Windows, a process-group signal elsewhere).
  *
  * Events: 'ready' (port), 'down' (reason; a retry is scheduled).
  */
@@ -78,7 +78,7 @@ export class BackendSidecar extends EventEmitter {
     const portArgs = ['--host', '127.0.0.1', '--port', String(port), '--parent-pid', String(process.pid)]
     if (app.isPackaged) {
       const dir = path.join(process.resourcesPath, 'backend')
-      return { cmd: path.join(dir, 'carrera-backend.exe'), args: portArgs, cwd: dir }
+      return { cmd: path.join(dir, process.platform === 'win32' ? 'carrera-backend.exe' : 'carrera-backend'), args: portArgs, cwd: dir }
     }
     const backendDir = path.resolve(__dirname, '..', '..', 'backend')
     return { cmd: 'uv', args: ['run', 'python', '-m', 'app', ...portArgs], cwd: backendDir }
@@ -135,7 +135,14 @@ export class BackendSidecar extends EventEmitter {
     }
     this.startedAt = Date.now()
     log.write(`\n--- ${new Date().toISOString()} start ${path.basename(cmd)} port ${port}\n`)
-    const child = spawn(cmd, args, { cwd, env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
+    // Off Windows the child leads its own process group so the whole tree (uv -> python in dev) can be signalled.
+    const child = spawn(cmd, args, {
+      cwd,
+      env,
+      windowsHide: true,
+      detached: process.platform !== 'win32',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
     this.child = child
     child.stdout?.on('data', (b: Buffer) => log.write(b))
     child.stderr?.on('data', (b: Buffer) => log.write(b))
@@ -225,8 +232,15 @@ export class BackendSidecar extends EventEmitter {
           finish()
         })
       } else {
-        child.kill('SIGTERM')
-        setTimeout(() => child.kill('SIGKILL'), 5000).unref()
+        const signal = (sig: NodeJS.Signals) => {
+          try {
+            process.kill(-child.pid!, sig) // negative pid: the whole process group
+          } catch {
+            child.kill(sig)
+          }
+        }
+        signal('SIGTERM')
+        setTimeout(() => signal('SIGKILL'), 5000).unref()
       }
     })
   }

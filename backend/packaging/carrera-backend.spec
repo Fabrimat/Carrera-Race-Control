@@ -1,9 +1,9 @@
 # PyInstaller spec for the standalone backend (onedir, console exe run hidden by Electron).
 # Build:  cd backend && uv run pyinstaller packaging/carrera-backend.spec --noconfirm \
 #             --distpath build/pyi-dist --workpath build/pyi-work
-# Output: backend/build/pyi-dist/carrera-backend/carrera-backend.exe
+# Output: backend/build/pyi-dist/carrera-backend/carrera-backend (carrera-backend.exe on Windows)
 # The frontend is NOT bundled here: the Electron packaging places frontend/dist next to the
-# exe (<exe dir>/frontend/dist), which is where app.main looks for it in a frozen build.
+# executable (<exe dir>/frontend/dist), which is where app.main looks for it in a frozen build.
 from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
@@ -13,11 +13,12 @@ BACKEND = SPEC_DIR.parent
 
 hiddenimports = []
 datas = []
-for pkg in ("app", "uvicorn", "carreralib", "bleak", "elevenlabs", "anthropic", "openai", "winrt"):
+for pkg in ("app", "uvicorn", "carreralib", "bleak", "elevenlabs", "anthropic", "openai", "winrt",
+            "dbus_fast", "objc", "Foundation", "CoreBluetooth", "libdispatch"):
     try:
         hiddenimports += collect_submodules(pkg)
         datas += collect_data_files(pkg)
-    except Exception as exc:  # optional on other platforms (winrt is Windows only)
+    except Exception as exc:  # platform-specific BLE backends: winrt (Windows), dbus_fast (Linux), pyobjc (macOS)
         print(f"spec: skipping {pkg}: {exc}")
 hiddenimports += ["multipart", "websockets", "httptools", "h11", "anyio._backends._asyncio"]
 
