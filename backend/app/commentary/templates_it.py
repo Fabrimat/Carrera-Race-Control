@@ -142,6 +142,26 @@ TEMPLATES: dict[str, list[str]] = {
         "La pole position è di {winner}!",
         "{session} in archivio, {winner} partirà in pole!",
     ],
+    # ---- incidenti: un'auto è fuori pista (le varianti con {sector} servono i Check Lane)
+    "incident_started": [
+        "{name} è fuori pista! Serve un commissario!",
+        "Guai per {name}, l'auto è ferma in pista!",
+        "{name} va fuori, bandiera gialla!",
+        "Attenzione! {name} esce nel settore {sector}!",
+        "Bandiera gialla nel settore {sector}, {name} è fuori!",
+    ],
+    "incident_again": [
+        "{name} è di nuovo fuori, è l'incidente numero {count}!",
+        "Ancora {name}! Incidente numero {count}!",
+        "{name} esce ancora, siamo a {count} incidenti!",
+        "Incidente numero {count} nel settore {sector}: {name} è fuori di nuovo!",
+    ],
+    "incident_cleared": [
+        "{name} è di nuovo in pista!",
+        "{name} riparte!",
+        "E {name} rientra in gara!",
+        "Via libera, {name} torna in azione!",
+    ],
 }
 
 # Placeholders that never carry numbers: variants using only these may be cached as audio.

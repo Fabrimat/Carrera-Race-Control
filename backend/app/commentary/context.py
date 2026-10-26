@@ -21,6 +21,8 @@ from app.race.models import (
     DriverAssigned,
     EventProgram,
     FalseStart,
+    IncidentCleared,
+    IncidentStarted,
     LapCompleted,
     PositionChange,
     RaceEvent,
@@ -109,6 +111,12 @@ def summarise_event(event: RaceEvent, cars: dict[int, CarConfig], lang: str) -> 
         summary["mode"] = event.mode.value
     elif isinstance(event, FalseStart):
         summary["action"] = event.action
+    elif isinstance(event, IncidentStarted):
+        summary["source"] = event.source
+        summary["count"] = event.count
+    elif isinstance(event, IncidentCleared):
+        summary["by"] = event.by
+        summary["lost_time"] = speech.say_lap_time(event.lost_ms, lang)
     elif isinstance(event, SessionFinished):
         summary["session_kind"] = event.kind.value
         if event.order:
@@ -211,6 +219,12 @@ def _car_summary(car: CarState, cars: dict[int, CarConfig], lang: str) -> dict[s
         info["last_lap"] = speech.say_lap_time(car.last_lap_ms, lang)
     if car.best_lap_ms is not None:
         info["best_lap"] = speech.say_lap_time(car.best_lap_ms, lang)
+    if car.incidents:
+        info["incidents"] = car.incidents
+        if car.incident_lost_ms:
+            info["incident_lost_time"] = speech.say_lap_time(car.incident_lost_ms, lang)
+    if car.incident is not None:
+        info["off_track"] = True
     return info
 
 

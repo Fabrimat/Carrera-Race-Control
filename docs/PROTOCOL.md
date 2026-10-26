@@ -350,14 +350,17 @@ share a logo). The engine copies it to `CarState.logo_id`. Files live in
 **Detection.** Each engine tick while the phase is RUNNING (also while finishing), for
 every car that has crossed the line, is not in the pit and not finished, with no open
 incident: its *expected time* is `segment_estimates["a>b"]` for the stretch from its
-`last_crossing.sensor` to the next sensor in driving order (with no Check Lanes: its
-average valid lap). No expected time yet → never flagged. Its *watch anchor* is the latest
+`last_crossing.sensor` to the next sensor in driving order (with no Check Lanes: the
+same kind of estimate for the whole lap, `segment_estimates["1>1"]`, an EWMA that ignores a
+lap longer than 1.8x the estimate or with a pit stop, so an incident lap does not inflate
+the next threshold). No expected time yet → never flagged. Its *watch anchor* is the latest
 of: its last counted crossing, its pit exit, the last PAUSED→RUNNING resume, the last
 CU resync. A car is **probably off** when `race_now - anchor > overdue_factor × expected`.
 After a marshal clear the car is not watched again until its next counted crossing. A
 counted crossing is one that updates `last_crossing` (not a double trigger ignored by
 `min_lap_ms` / sensor debounce, not an impossible split). If in the same tick *every*
-watched car is overdue (a deliberate halt or a CU hiccup), none is flagged. Nothing is
+watched car is overdue and at least two cars are watched (a deliberate halt or a CU
+hiccup), none is flagged; a sole watched car (solo practice) that is overdue is flagged. Nothing is
 detected while PAUSED or STARTING. `position.py`'s `stale` is a display hint (it may borrow
 other cars' estimates) and can disagree with incidents.
 

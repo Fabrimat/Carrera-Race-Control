@@ -35,6 +35,13 @@ LIGHT_STEP_MS = 1000  # one start light per second
 STATUS_INTERVAL_MS = 100
 PIT_FUEL_LEVEL = 2  # cars pit when fuel drops to this level (or below)
 SLOW_LAP_RATE = 0.03  # crash / deslot probability per lap
+# A car deslots (stops at a point of a lap for DESLOT_MIN_MS..DESLOT_MAX_MS, then goes on)
+# rarely; it has its own random stream so it never changes the other timings of a seed.
+DESLOT_RATE = 0.004
+DESLOT_MIN_MS = 10_000
+DESLOT_MAX_MS = 25_000
+# Events that are shifted when a car is held (everything it would do on the track).
+_CAR_TRACK_EVENTS = frozenset({"cross", "double", "sensor2", "sensor3"})
 
 
 class _SimCar:
@@ -58,8 +65,12 @@ class SimulatedCU:
         pit_lane: bool,
         clock_offset_ms: int,
         check_lanes: list[float] | None = None,
+        deslot_rate: float = 0.0,
+        deslot_rng: random.Random | None = None,
     ) -> None:
         self.rng = rng
+        self.deslot_rate = deslot_rate
+        self.deslot_rng = deslot_rng or random.Random()
         # Fractions of the lap where Check Lane sensors 2, 3 sit (index 0 -> sensor 2).
         self.check_lanes = list(check_lanes or [])
         self.double_trigger_rate = double_trigger_rate
@@ -152,6 +163,31 @@ class SimulatedCU:
         else:
             self.resume(t)
 
+    def deslot(self, t: float, address: int, seconds: float) -> None:
+        """Hold car ``address`` for ``seconds`` from virtual time ``t`` (it deslots, then goes on).
+
+        Everything the car still has to do on the track (Check Lanes, the line) happens
+        ``seconds`` later; a held car is also held while the pace car is out.
+        """
+        if not 0 <= address < len(self.cars):
+            raise ValueError(f"no car {address}")
+        delay = max(0.0, seconds) * 1000
+        moved = []
+        for when, seq, kind, arg in self._heap:
+            if arg == address and kind in _CAR_TRACK_EVENTS:
+                when = max(when, t) + delay
+            moved.append((when, seq, kind, arg))
+        self._heap = moved
+        heapq.heapify(self._heap)
+        self._frozen = [
+            (
+                remaining + delay if arg == address and kind in _CAR_TRACK_EVENTS else remaining,
+                kind,
+                arg,
+            )
+            for remaining, kind, arg in self._frozen
+        ]
+
     def reset(self, t: float) -> None:
         self.cu_offset = 0
         self.cu_zero = t
@@ -194,12 +230,21 @@ class SimulatedCU:
                 extra = self.rng.uniform(3000, 5000)
                 self._push_car_event(t + extra, "pit_end", car.address)
         lap = self._lap_ms(car)
+        stop: tuple[float, float] | None = None  # (fraction of the lap, ms) of a deslot
+        if self.deslot_rate and self.deslot_rng.random() < self.deslot_rate:
+            stop = (
+                self.deslot_rng.uniform(0.05, 0.95),
+                self.deslot_rng.uniform(DESLOT_MIN_MS, DESLOT_MAX_MS),
+            )
         for index, fraction in enumerate(self.check_lanes):
             # Per-passage jitter of about 1 % of the lap keeps the splits realistic.
             jitter = min(1.03, max(0.97, self.rng.gauss(1.0, 0.01)))
-            at = t + extra + lap * min(fraction * jitter, 0.99)
+            at_fraction = min(fraction * jitter, 0.99)
+            at = t + extra + lap * at_fraction
+            if stop is not None and at_fraction > stop[0]:
+                at += stop[1]
             self._push_car_event(at, f"sensor{index + 2}", car.address)
-        self._push_car_event(t + lap + extra, "cross", car.address)
+        self._push_car_event(t + lap + extra + (stop[1] if stop else 0.0), "cross", car.address)
 
     def advance(self, now: float) -> list[tuple[float, PollResult]]:
         """Process every event due at or before ``now``; returns (time, message) in order."""
@@ -239,6 +284,7 @@ class SimulatorTrack:
         clock_offset_ms: int | None = None,
         clock: Callable[[], float] = time.monotonic,
         check_lanes: list[float] | None = None,
+        deslot_rate: float = DESLOT_RATE,
     ) -> None:
         if not 1 <= num_cars <= 6:
             raise ValueError("num_cars must be between 1 and 6")
@@ -254,7 +300,15 @@ class SimulatorTrack:
         self._clock = clock
         self._t0: float | None = None
         self._core = SimulatedCU(
-            num_cars, rng, double_trigger_rate, fuel, pit_lane, clock_offset_ms, check_lanes
+            num_cars,
+            rng,
+            double_trigger_rate,
+            fuel,
+            pit_lane,
+            clock_offset_ms,
+            check_lanes,
+            deslot_rate,
+            random.Random(seed),  # its own stream: a deslot never shifts other timings
         )
         self._queue: deque[PollResult] = deque()
         self._next_status = 0.0
@@ -317,6 +371,17 @@ class SimulatorTrack:
         now = self._now()
         self._fill(now)
         self._core.toggle_pause(now)
+
+    def deslot(self, address: int, seconds: float, at_ms: float | None = None) -> None:
+        """Make a car deslot now: it stands still for ``seconds`` (simulated time), then goes on.
+
+        Deterministic, for tests and demos. ``at_ms`` is the virtual time to apply it at (for
+        :meth:`generate`, which has its own virtual clock); default: the current time.
+        """
+        now = self._now() if at_ms is None else at_ms
+        if at_ms is None:
+            self._fill(now)
+        self._core.deslot(now, address, seconds)
 
     async def reset_timer(self) -> None:
         now = self._now()

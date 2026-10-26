@@ -112,6 +112,16 @@ async def race_pace_car(request: Request) -> RaceState:
     return await controller(request).toggle_pace_car()
 
 
+@router.post("/api/race/incidents/{address}", response_model=RaceState)
+async def race_incident_report(request: Request, address: int) -> RaceState:
+    return await controller(request).report_incident(address)
+
+
+@router.post("/api/race/incidents/{address}/clear", response_model=RaceState)
+async def race_incident_clear(request: Request, address: int) -> RaceState:
+    return await controller(request).clear_incident(address)
+
+
 # --------------------------------------------------------------------------- settings
 
 
