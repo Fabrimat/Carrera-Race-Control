@@ -3,6 +3,7 @@
   "productName": "Carrera Race Control",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "description": "Standalone Windows app for Carrera Race Control (Electron shell around the Python backend)",
   "author": "Carrera Race Control",
   "main": "dist/main.js",

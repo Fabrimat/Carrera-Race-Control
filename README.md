@@ -279,3 +279,7 @@ PLAN.md                    product plan
 ## Trademarks
 
 Carrera and AppConnect are trademarks of Carrera Toys GmbH. This project is an unofficial, independent tool and is not affiliated with or endorsed by Carrera Toys GmbH.
+
+## License
+
+[MIT](LICENSE) © 2026 Fabrizio La Rosa.

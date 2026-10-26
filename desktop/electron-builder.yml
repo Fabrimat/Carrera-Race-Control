@@ -1,6 +1,6 @@
 appId: app.carrera.racecontrol
 productName: Carrera Race Control
-copyright: Carrera Race Control
+copyright: Copyright (c) 2026 Fabrizio La Rosa
 directories:
   output: release
   buildResources: build

@@ -3,6 +3,7 @@ name = "carrera-rms"
 version = "0.1.0"
 description = "Local race control for Carrera Digital 124/132 over BLE, with live dashboard and AI commentator"
 requires-python = ">=3.11"
+license = "MIT"
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
