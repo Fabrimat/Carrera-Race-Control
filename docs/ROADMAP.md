@@ -1,5 +1,10 @@
 # Roadmap
 
+Status (2026-10-26): wave 1 done — logos (§2), incidents without webcam (§1, last part),
+fuel strategy and mandatory pit stops (§3, read-only: no CU fuel writes), keyboard
+shortcuts (§6). Still open: webcam tracking (§1), pairing and speed/brake profiles (§4),
+responsive panel (§5).
+
 Ideas requested by the user for after the current work (sectors, track map, 16:9
 control panel). Each item notes what the hardware and libraries can actually do, so
 the scope is realistic before we start.
