@@ -16,6 +16,34 @@
   --color-gold: #ffd54a;
 }
 
+/*
+ * Responsive layouts (see lib/layout.ts): the layout class lives on <html data-layout> and the
+ * variants below key on it, so the dashboard and TV mode share one set of breakpoints.
+ */
+@custom-variant ultrawide (&:where([data-layout=ultrawide] *));
+@custom-variant touch (&:where([data-layout=phone] *, [data-layout^=tablet] *));
+
+/* Touch layouts: every control is at least 44 px tall. */
+:is([data-layout=phone], [data-layout^='tablet']) :is(button, select, summary, input:not([type=checkbox], [type=radio], [type=range], [type=file], [type=hidden])) {
+  min-height: 44px;
+}
+
+/*
+ * Ultrawide dashboard (21:9 and wider): the two lower bands dissolve into one grid of four
+ * columns: leaderboard | map | chart over commentary | records and event log.
+ */
+[data-layout=ultrawide] .dash {
+  grid-template-columns: minmax(0, 1.5fr) minmax(0, 1.7fr) minmax(0, 1fr) minmax(0, 0.9fr);
+  grid-template-rows: auto minmax(0, 1fr) minmax(0, 1fr);
+}
+[data-layout=ultrawide] .dash-band { display: contents; }
+[data-layout=ultrawide] .dash-band-top { grid-column: 1 / -1; }
+[data-layout=ultrawide] .dash-leader { grid-column: 1; grid-row: 2 / 4; }
+[data-layout=ultrawide] .dash-map { grid-column: 2; grid-row: 2 / 4; }
+[data-layout=ultrawide] .dash-chart { grid-column: 3; grid-row: 2; }
+[data-layout=ultrawide] .dash-comm { grid-column: 3; grid-row: 3; }
+[data-layout=ultrawide] .dash-log { grid-column: 4; grid-row: 2 / 4; }
+
 html, body, #root { height: 100%; }
 body {
   margin: 0;

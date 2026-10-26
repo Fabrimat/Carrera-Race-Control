@@ -23,6 +23,8 @@ interface Props {
   editable?: boolean
   /** Show the marshal "report off" action (race running or paused). */
   reportable?: boolean
+  /** Phone pit wall: Pos, name, laps, last lap and gap only, small text, no sectors / fuel / best. */
+  compact?: boolean
 }
 
 export function sortCars(cars: CarState[]): CarState[] {
@@ -179,13 +181,17 @@ export function Leaderboard({
   reportable = false,
   numSectors = 1,
   bestSectors = [],
+  compact = false,
 }: Props) {
   const t = useT()
   const f = useFormat()
   const rows = sortCars(cars)
   const ref = useFlip(rows.map((c) => c.address).join(','))
-  const sectors = numSectors > 1 ? numSectors : 0
-  const cols = sectors
+  const sectors = numSectors > 1 && !compact ? numSectors : 0
+  const showFuel = fuelMode && !compact
+  const cols = compact
+    ? 'grid-cols-[1.5rem_minmax(4.5rem,1.6fr)_2rem_minmax(0,1fr)_minmax(0,1fr)]'
+    : sectors
     ? ''
     : fuelMode
       ? 'grid-cols-[3.5rem_minmax(0,1.6fr)_4rem_1fr_1fr_1fr_8rem]'
@@ -195,7 +201,7 @@ export function Leaderboard({
         gridTemplateColumns: `3.5rem minmax(0,1.6fr) 4rem 1fr 1fr ${'minmax(0,0.7fr) '.repeat(sectors)}1fr${fuelMode ? ' 8rem' : ''}`,
       }
     : undefined
-  const text = large ? 'text-4xl' : dense ? 'text-xl min-[1700px]:text-2xl' : 'text-2xl'
+  const text = compact ? 'text-base' : large ? 'text-4xl' : dense ? 'text-xl min-[1700px]:text-2xl' : 'text-2xl'
   const rowPad = dense ? 'py-1 min-[1700px]:py-2' : 'py-2'
   const head = 'text-xs uppercase tracking-widest text-dim'
 
@@ -205,19 +211,19 @@ export function Leaderboard({
 
   return (
     <div ref={ref} role="table" aria-label={t('leaderboard.title')} className="w-full">
-      <div role="row" style={gridStyle} className={`grid ${cols} items-end gap-3 px-3 pb-2 ${head}`}>
+      <div role="row" style={gridStyle} className={`grid ${cols} items-end ${compact ? 'gap-2' : 'gap-3'} px-3 pb-2 ${head}`}>
         <span role="columnheader">{t('leaderboard.pos')}</span>
         <span role="columnheader">{t('leaderboard.driver')}</span>
         <span role="columnheader" className="text-right">{t('leaderboard.laps')}</span>
         <span role="columnheader" className="text-right">{t('leaderboard.last')}</span>
-        <span role="columnheader" className="text-right">{t('leaderboard.best')}</span>
+        {!compact && <span role="columnheader" className="text-right">{t('leaderboard.best')}</span>}
         {Array.from({ length: sectors }, (_, i) => (
           <span key={i} role="columnheader" className="text-right" title={t('sectors.title')}>
             {t('sectors.s', { n: i + 1 })}
           </span>
         ))}
         <span role="columnheader" className="text-right">{t('leaderboard.gap')}</span>
-        {fuelMode && <span role="columnheader">{t('leaderboard.fuel')}</span>}
+        {showFuel && <span role="columnheader">{t('leaderboard.fuel')}</span>}
       </div>
       <div className="flex flex-col gap-2">
         {rows.map((c) => {
@@ -236,16 +242,16 @@ export function Leaderboard({
               style={{ ...gridStyle, borderLeft: `8px solid ${c.color}` }}
               data-addr={c.address}
               data-testid="leaderboard-row"
-              className={`grid ${cols} items-center gap-3 rounded-md border border-line bg-panel px-3 ${rowPad} ${text}`}
+              className={`grid ${cols} items-center ${compact ? 'gap-2' : 'gap-3'} rounded-md border border-line bg-panel px-3 ${rowPad} ${text}`}
             >
               <span role="cell" className="num font-bold">{c.position ?? '–'}</span>
-              <span role="cell" className="flex min-w-0 items-center gap-3 font-semibold">
-                <span
+              <span role="cell" className={`flex min-w-0 items-center font-semibold ${compact ? 'gap-1 truncate' : 'gap-3'}`}>
+                {!compact && <span
                   className="inline-block h-4 w-4 shrink-0 rounded-full"
                   style={{ background: c.color }}
                   aria-hidden
-                />
-                <CarLogo logoId={c.logo_id} size={large ? 40 : dense ? 24 : 28} />
+                />}
+                {!compact && <CarLogo logoId={c.logo_id} size={large ? 40 : dense ? 24 : 28} />}
                 <CarName address={c.address} name={c.driver_name || c.name} editable={editable && !c.driver_name} />
                 {c.in_pit && (
                   <span
@@ -304,7 +310,7 @@ export function Leaderboard({
               <span role="cell" className="num text-right" data-testid="last-lap">
                 {f.lap(c.last_lap_ms)}
               </span>
-              <span
+              {!compact && <span
                 role="cell"
                 data-testid="best-lap"
                 data-best={isBest ? 'true' : 'false'}
@@ -312,12 +318,12 @@ export function Leaderboard({
                 className={`num text-right ${isRecord ? 'font-bold text-gold' : isBest ? 'font-bold text-purple' : ''}`}
               >
                 {f.lap(c.best_lap_ms)}
-              </span>
+              </span>}
               {Array.from({ length: sectors }, (_, i) => (
                 <SectorCell key={i} index={i} car={c} overall={bestSectors[i] ?? null} />
               ))}
               <span role="cell" className="num whitespace-nowrap text-right" data-testid="gap">{gap}</span>
-              {fuelMode && (
+              {showFuel && (
                 <span role="cell">{c.fuel !== null ? <FuelBar fuel={c.fuel} /> : null}</span>
               )}
             </div>

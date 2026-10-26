@@ -6,6 +6,7 @@ import { useLanguage, useT } from './i18n/useT'
 import { api } from './lib/api'
 import { connectionErrorMessage } from './lib/errors'
 import { refreshEventData } from './lib/eventData'
+import { useLayoutSync } from './lib/layout'
 import { useRoute } from './lib/route'
 import { useStore } from './lib/store'
 import { useShortcuts } from './lib/useShortcuts'
@@ -30,6 +31,7 @@ export default function App() {
   const conn = useStore((s) => s.connection)
 
   useShortcuts()
+  useLayoutSync()
 
   useEffect(() => {
     wsClient.start()

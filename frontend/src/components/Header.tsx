@@ -1,3 +1,4 @@
+import { useRef, useState } from 'react'
 import { useT } from '../i18n/useT'
 import { saveSettings } from '../lib/settingsSave'
 import { guarded } from '../lib/errors'
@@ -44,17 +45,46 @@ export function LanguageSwitcher() {
 export function Header({ route }: { route: Route }) {
   const t = useT()
   const ws = useStore((s) => s.ws)
+  // The menu belongs to the page it was opened on: navigating closes it.
+  const [menuRoute, setMenuRoute] = useState<string | null>(null)
+  const menu = menuRoute === route.name
+  const toggleRef = useRef<HTMLButtonElement>(null)
   return (
-    <header className="flex flex-wrap items-center gap-4 border-b border-line bg-panel px-5 py-3">
+    <header
+      onKeyDown={(e) => {
+        if (e.key === 'Escape' && menu) {
+          setMenuRoute(null)
+          toggleRef.current?.focus()
+        }
+      }}
+      className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-line bg-panel px-3 py-3 min-[900px]:px-5">
       <h1 className="text-xl font-black uppercase tracking-[0.2em]">
         <span className="text-signal">▮</span> {t('app.title')}
       </h1>
-      <nav className="flex gap-1">
+      {/* from 900 px wide the nav is a row; below it collapses behind the menu button */}
+      <button
+        type="button"
+        ref={toggleRef}
+        data-testid="nav-toggle"
+        aria-expanded={menu}
+        aria-controls="main-nav"
+        aria-label={menu ? t('layout.menu_close') : t('layout.menu')}
+        className="order-last ml-auto min-h-11 min-w-11 rounded-md border border-line bg-panel-2 px-3 text-lg font-bold min-[900px]:hidden"
+        onClick={() => setMenuRoute(menu ? null : route.name)}
+      >
+        <span aria-hidden>{menu ? '✕' : '☰'}</span>
+      </button>
+      <nav
+        id="main-nav"
+        data-testid="main-nav"
+        data-open={menu}
+        className={`${menu ? 'order-last flex w-full flex-col' : 'hidden'} gap-1 min-[900px]:order-none min-[900px]:flex min-[900px]:w-auto min-[900px]:flex-row`}
+      >
         {NAV.map((n) => (
           <a
             key={n.href}
             href={n.href}
-            className={`rounded-md px-3 py-1 text-sm font-semibold uppercase tracking-wide ${
+            className={`rounded-md px-3 py-1 text-sm font-semibold uppercase tracking-wide touch:flex touch:min-h-11 touch:items-center ${
               n.name.includes(route.name) ? 'bg-panel-2 text-ink' : 'text-dim hover:text-ink'
             }`}
           >
@@ -62,7 +92,7 @@ export function Header({ route }: { route: Route }) {
           </a>
         ))}
       </nav>
-      <div className="ml-auto flex items-center gap-3">
+      <div className="ml-auto flex items-center gap-3 max-[899px]:order-2 max-[899px]:ml-0">
         <AudioHint />
         {ws !== 'open' && (
           <span
