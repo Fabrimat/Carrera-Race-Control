@@ -312,7 +312,8 @@ fields have defaults, so older settings, programs and export bundles still load.
 
 A library of brand logos; a car points at one with `CarConfig.logo_id` (several cars may
 share a logo). The engine copies it to `CarState.logo_id`. Files live in
-`DATA_DIR/logos/<id>.<ext>`, metadata in the store (schema v5, table `logos`).
+`DATA_DIR/logos/<id>.<ext>`, metadata (incl. `media_type`) in the store (schema v5, table
+`logos`).
 
 | Method | Path | Body | Response |
 |---|---|---|---|
@@ -322,33 +323,59 @@ share a logo). The engine copies it to `CarState.logo_id`. Files live in
 | GET | `/api/logos/{id}/image` | – | the image, `ETag` + `Cache-Control: no-cache`, 304 on `If-None-Match` |
 | DELETE | `/api/logos/{id}` | – | `{"logos": Logo[]}`; cars using it get `logo_id = null` (settings saved) |
 
-- Ids: generated from the name like driver ids (`^[a-z0-9][a-z0-9-]{0,39}$`, unique).
-- Images: decoded ≤ 512 KB; PNG / JPEG / WebP by magic bytes, or SVG (`image/svg+xml`) when
-  the text parses as XML with an `<svg>` root and contains no `<script`, no `on*=` event
-  attributes, no `javascript:` and no `<foreignObject`. Otherwise `invalid_image`
-  (422); too big `image_too_large` (413); unknown id `logo_not_found` (404).
-- Every image response carries `X-Content-Type-Options: nosniff`; SVG responses also
-  `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; sandbox`. The UI
-  shows logos only through `<img>`.
+- Ids: generated from the name like driver ids (`^[a-z0-9][a-z0-9-]{0,39}$`, unique); any
+  other id in a path is `logo_not_found` (no path traversal). A row whose file is missing
+  on disk is also `logo_not_found` for the image.
+- Images: decoded ≤ 512 KB (`image_too_large`, 413); PNG / JPEG / WebP by magic bytes; or
+  SVG, checked on the parsed tree (stdlib `xml.etree`, no new dependency): reject any
+  `<!DOCTYPE` / `<!ENTITY` before parsing; root element must be `svg`; reject elements whose
+  local name is `script` or `foreignObject`; attributes whose local name starts with `on`;
+  any attribute value whose stripped, lower-cased text starts with `javascript:`;
+  `href` / `xlink:href` not starting with `#` or `data:image/`; `<style>` text containing
+  `@import` or `url(` with a non-`#`/non-`data:` target. Anything else: `invalid_image`
+  (422).
+- Every image response carries `X-Content-Type-Options: nosniff`; SVG responses (only
+  them) also `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline';
+  sandbox`. The API is same-origin with the app, so this CSP (plus showing logos only
+  through `<img>`) is the real defence; the tree checks are defence in depth.
 - `PUT /api/settings` with a `logo_id` that does not exist: `settings_invalid` (422).
-- Export bundles carry `CarConfig.logo_id` but never the images (like photos); a missing
-  logo is shown as no logo.
+- Export bundles carry `CarConfig.logo_id` but never the images (like photos). On import,
+  `logo_id`s that do not exist locally are set to null (so settings stay saveable).
+- Logos appear in the leaderboard, TV tower and race history, not on the map dots.
+- History results of races saved before this wave lack the new `CarState` fields
+  (`logo_id`, `incident*`, `fuel_*`): the UI treats them as null / 0 / [].
 
 ### Incidents
 
-A car is **probably off** when, while the race is RUNNING, it is not in the pit, not
-finished, and has gone `overdue_factor` × the expected time of its current stretch
-(`segment_estimates["a>b"]` from its `last_crossing`, or its average lap when no Check Lanes)
-without a crossing. Cars with no estimate yet (first lap) are never flagged. The engine
-then sets `CarState.incident` (`source: "overdue"`), increments `incidents`, adds
-`IncidentRules.penalty_s` × 1000 to `penalty_ms` and emits `incident_started`. Detection
-uses the effective rules: `SessionSpec.incidents` while an event session runs, else
-`settings.race.incidents`; `detect: false` disables it (marshal reports still work).
+**Detection.** Each engine tick while the phase is RUNNING (also while finishing), for
+every car that has crossed the line, is not in the pit and not finished, with no open
+incident: its *expected time* is `segment_estimates["a>b"]` for the stretch from its
+`last_crossing.sensor` to the next sensor in driving order (with no Check Lanes: its
+average valid lap). No expected time yet → never flagged. Its *watch anchor* is the latest
+of: its last counted crossing, its pit exit, the last PAUSED→RUNNING resume, the last
+CU resync. A car is **probably off** when `race_now - anchor > overdue_factor × expected`.
+After a marshal clear the car is not watched again until its next counted crossing. A
+counted crossing is one that updates `last_crossing` (not a double trigger ignored by
+`min_lap_ms` / sensor debounce, not an impossible split). If in the same tick *every*
+watched car is overdue (a deliberate halt or a CU hiccup), none is flagged. Nothing is
+detected while PAUSED or STARTING. `position.py`'s `stale` is a display hint (it may borrow
+other cars' estimates) and can disagree with incidents.
 
-The incident clears on the car's next sensor crossing (`by: "crossing"`; that crossing
-still counts normally), on the marshal's button (`by: "marshal"`), or when the race ends
-(`by: "race_end"`); `incident_cleared.lost_ms` is the race time between start and clear and
-is added to `incident_lost_ms`. One open incident per car.
+**Opening.** The engine sets `CarState.incident` (`started_race_ms` = race time of the
+detecting tick, or of the marshal report), increments `incidents`, adds
+`IncidentRules.penalty_s × 1000` to `penalty_ms` (for both `overdue` and `marshal`
+incidents, also with `detect: false`) and emits `incident_started`. `from_sensor` /
+`to_sensor` come from the engine's sensor order (1 = line); the controller fills
+`Incident.s` (and the event's `s`) with the midpoint of that stretch on the current layout
+(wrapping through the line), null without a layout. Rules are `self.config.incidents` in the
+engine: the controller already puts `SessionSpec.incidents` (or `settings.race.incidents`)
+there for event sessions, and `settings.race` otherwise; no session-rule plumbing is
+needed. `detect: false` disables detection only. One open incident per car.
+
+**Clearing.** On the car's next counted crossing (`by: "crossing"`; the crossing still
+counts normally), on the marshal's button (`by: "marshal"`), or when the race finishes or
+is stopped (`by: "race_end"`, emitted before `race_finished` in the same batch).
+`lost_ms` = race time between start and clear, added to `incident_lost_ms`.
 
 | Method | Path | Body | Response |
 |---|---|---|---|
@@ -359,11 +386,19 @@ Errors: `race_not_running` (409) unless the phase is RUNNING or PAUSED; `inciden
 (404) clearing a car without an open incident, or an address with no car; reporting a car
 that already has one is a no-op returning the state.
 
-Auto pace car (`auto_pace_car: true`): when the first incident opens the controller toggles
-the CU pace car once; when the last open incident clears it toggles it back. It only
-toggles back what it deployed itself, never while the race is not RUNNING, and new
-overdue detections are suspended while its pace car is out (marshal reports still
-work). A failed toggle is logged, not raised. Not yet verified on the real CU.
+**Auto pace car** (`auto_pace_car: true`). Toggling the pace car pauses the engine (phase
+PAUSED). When the first incident opens while RUNNING, the controller toggles the CU pace
+car once and remembers that it owns it. When the last open incident clears (the phase is
+then PAUSED by us), it toggles it back. It also recalls its own pace car when the race
+finishes, is stopped or reset. A manual `POST /api/race/pace-car` while ours is out hands
+ownership to the user (we stop tracking it). Ownership resets on prepare/reset. A failed
+toggle is logged, not raised. Known limit: the CU status has no pace-car flag, so pressing
+the pace-car button on the CU itself desyncs this tracking. Not yet verified on the real
+CU.
+
+**Simulator.** The simulator gets a deslot model (rarely, a car stops 10–25 s at a point in
+a stretch, then continues) and a deterministic method to make a given car deslot, for tests
+and demos.
 
 Commentary: `incident_started` is high priority ("Rossi is off at the hairpin!" — use the
 driver name, the count when > 1), `incident_cleared` normal. Results (`RaceDetail.results`)
@@ -372,29 +407,44 @@ keep `incidents` and `incident_lost_ms`.
 ### Fuel strategy
 
 Only when the CU is in fuel mode (`RaceState.fuel_mode`); otherwise `fuel_strategy` is
-null and `fuel_laps` stays empty. At each line crossing the engine appends the car's fuel
-level to `fuel_laps` and updates `FuelStrategy`:
-- `per_lap`: average level drop over completed laps without a pit stop or refuel in them
-  (EWMA or mean of the last 5); null until one such lap exists.
+null and `fuel_laps` empty (also if fuel mode turns off mid-race). Levels are the CU's
+0..15, so the rate is measured per **stint** (the laps since the race start or the last
+pit exit):
+- `fuel_laps[i]` = level at the end of lap `i + 1` (`len(fuel_laps) == laps`), null when the
+  level was unknown.
+- `per_lap = (level at stint start − level now) / laps in the stint`, once the stint has
+  ≥ 2 laps and ≥ 1 level drop; until then the previous stint's rate is kept (null in the
+  first stint).
 - `laps_left = fuel / per_lap` (null if `per_lap` is null or 0).
-- `laps_to_go`: LAPS mode `target_laps - laps`; TIMED mode `ceil(remaining_ms / avg_lap_ms)`;
-  PRACTICE null.
-- `must_pit = laps_to_go is not None and laps_left is not None and laps_left < laps_to_go`;
-  `pit_by_lap = laps + floor(laps_left)` when `must_pit`.
+- `laps_to_go`: LAPS mode, leader-based: `RaceState.remaining_laps` (the race ends when the
+  leader completes `target_laps`), so it may overstate by one for a lapped car; TIMED mode
+  `ceil(remaining_ms / avg_lap_ms)`; PRACTICE null; 0 while finishing.
+- `must_pit = not in_pit and laps_to_go is not None and laps_left is not None and
+  laps_left < laps_to_go`; `pit_by_lap = laps + floor(laps_left)` when `must_pit`.
 
-Mandatory pit stops (`PitRules`, effective rules as for incidents): at the finish, a car
-with `pit_stops < min_stops` gets `(min_stops - pit_stops) × missed_penalty_s × 1000` added
-to `penalty_ms` and a `pit_missed` event, before the final order, `race_finished`, the
-event classification and the history results are computed. Commentary: a `must_pit` car
-may get a strategy line (rate-limited, at most once per car per race), and `pit_missed`
-a normal-priority line. The app never writes fuel values to the CU in this wave.
+Mandatory pit stops (`self.config.pits`, filled like `incidents`): in LAPS and TIMED mode
+only, on any race end (finish or Stop), a car with `pit_stops < min_stops` gets
+`(min_stops - pit_stops) × missed_penalty_s × 1000` added to `penalty_ms` and a `pit_missed`
+event, before the final order, `race_finished`, the event classification and the history
+results. A stop is a counted `pit_stops` entry (a drive-through counts). Commentary: a
+`must_pit` car may get a strategy line (at most once per car per race), and `pit_missed` a
+normal-priority line. The app never writes fuel values to the CU in this wave.
 
 ### Keyboard shortcuts
 
 `Settings.shortcuts` maps an action id to a key combo, overriding the frontend defaults
 (`""` disables an action). Combos are `[Ctrl+][Alt+][Shift+]<key>` with `<key>` a
 `KeyboardEvent.key` value (single characters upper-case, e.g. `Shift+P`, `Space`, `Escape`,
-`F2`, `+`). The backend only checks `max 100 entries`, ids ≤ 40 and combos ≤ 40 characters
-(`settings_invalid` otherwise). Action ids, defaults, conflict detection and the `?` help
+`F2`, `+`). Normalisation from a `KeyboardEvent` (works on IT and US layouts): letters →
+upper case with an explicit `Shift+` when shift is held; other printable characters → the
+produced character with Shift ignored (`?`, `+`); non-printable keys (`F1`..`F12`, arrows,
+`Space` for `" "`, `Escape`, `Enter`, `Backspace`, `Delete`) keep all modifiers; `Dead`,
+`Unidentified`, `Process` and Meta combos are ignored; Ctrl+Alt (AltGr) combos are not
+allowed; browser-reserved combos (Ctrl+R/W/N/T, F5, F11, F12) are not allowed. The backend
+checks in `settings_errors()` (so the code is `settings_invalid`): at most 100 entries, ids
+and combos ≤ 40 characters. Action ids, defaults, conflict detection and the `?` help
 overlay live in the frontend. Shortcuts never fire while typing in an input, textarea,
-select or contenteditable, nor while a modal other than the help overlay is open.
+select or contenteditable, nor while a modal other than the help overlay is open; Space /
+Enter on a focused button, link or `[role=button]` are left to that element; handled
+combos call `preventDefault`. Destructive actions (stop, reset, disconnect) default to
+combos with a modifier (e.g. `Ctrl+Shift+R`).

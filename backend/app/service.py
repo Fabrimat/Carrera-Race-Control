@@ -1488,7 +1488,13 @@ class RaceController:
         """The race config of a session: the user's race settings with the spec's format."""
         mode = RaceMode.TIMED if spec.kind is SessionKind.QUALIFYING else spec.mode
         return self.settings.race.model_copy(
-            update={"mode": mode, "target_laps": spec.target_laps, "duration_s": spec.duration_s}
+            update={
+                "mode": mode,
+                "target_laps": spec.target_laps,
+                "duration_s": spec.duration_s,
+                "incidents": spec.incidents or self.settings.race.incidents,
+                "pits": spec.pits or self.settings.race.pits,
+            }
         )
 
     def _apply_session_rules(self, spec: SessionSpec | None) -> None:

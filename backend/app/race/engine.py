@@ -72,6 +72,7 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import Literal
 
 from app.race.models import (
     BestLap,
@@ -81,7 +82,9 @@ from app.race.models import (
     Crossing,
     FalseStart,
     FalseStartRule,
+    FuelStrategy,
     Idle,
+    Incident,
     Lap,
     LapCompleted,
     LowFuel,
@@ -148,6 +151,16 @@ class _Car:
     line_ok: bool = True  # last_ts is this lap's start (False after a missed line crossing)
     seg_pit: bool = False  # the segment in progress included a pit stop
     last_crossing: Crossing | None = None
+    # Roadmap wave 1 (docs/PROTOCOL.md). Incidents (brief IB):
+    incident: Incident | None = None
+    incidents: int = 0
+    incident_lost_ms: int = 0
+    watch_from_ms: int = 0  # overdue detection anchor (see PROTOCOL "Incidents")
+    watch_after_crossing: bool = False  # no detection until the next counted crossing
+    # Fuel strategy (brief F):
+    fuel_laps: list[int | None] = field(default_factory=list)  # level at the end of each lap
+    fuel_strategy: FuelStrategy | None = None
+    lap_pit: bool = False  # the lap in progress included a pit stop
 
     @property
     def crossed(self) -> bool:
@@ -547,6 +560,14 @@ class RaceEngine:
             last_crossing=car.last_crossing.model_copy() if car.last_crossing else None,
             segment_estimates=dict(car.seg_est),
             penalty_ms=car.penalty_ms,
+            logo_id=self._configs[car.address].logo_id if car.address in self._configs else None,
+            incident=car.incident.model_copy() if car.incident else None,
+            incidents=car.incidents,
+            incident_lost_ms=car.incident_lost_ms,
+            fuel_strategy=(
+                car.fuel_strategy.model_copy() if car.fuel_strategy and self._fuel_mode else None
+            ),
+            fuel_laps=list(car.fuel_laps) if self._fuel_mode else [],
         )
 
     # ------------------------------------------------------------------ input
@@ -645,6 +666,7 @@ class RaceEngine:
                             race_time_ms=self._race_ms,
                         )
                     )
+        self._update_fuel_strategy()
         return events
 
     def _false_start(self) -> list[RaceEvent]:
@@ -713,7 +735,7 @@ class RaceEngine:
         if lap_ms < self.config.min_lap_ms:
             return []  # double trigger: ignored, reference timestamp not moved
 
-        events: list[RaceEvent] = []
+        events: list[RaceEvent] = self._clear_incident(car, "crossing", race_t)
         valid = lap_ms <= self.config.max_lap_ms
         sector_events = self._close_lap(car, msg.timestamp, lap_ms, valid, race_t)
         car.last_ts = msg.timestamp
@@ -721,6 +743,7 @@ class RaceEngine:
         car.laps += 1
         car.last_lap_ms = lap_ms
         car.lap_times.append(lap_ms)
+        self._record_fuel_lap(car)
         self._last_crossing_ms = race_t
         self._idle_emitted = False
         self._laps.append(
@@ -965,9 +988,10 @@ class RaceEngine:
         return []
 
     def _finish_race(self) -> list[RaceEvent]:
+        events = self._close_incidents_at_end() + self._apply_pit_penalties()
         order = [c.address for c in self._standings()]
         self._phase = RacePhase.FINISHED
-        return [
+        return events + [
             RaceFinished(
                 winner=order[0] if order else None,
                 order=order,
@@ -981,7 +1005,7 @@ class RaceEngine:
         if not self._emitting():
             return []
         self._advance_clock()
-        events: list[RaceEvent] = []
+        events: list[RaceEvent] = self._check_incidents()
         mode = self.config.mode
         if (
             mode is RaceMode.TIMED
@@ -1005,3 +1029,30 @@ class RaceEngine:
                 )
             )
         return events
+
+    # ------------------------------------------------------------------ roadmap wave 1 hooks
+    # Call sites are fixed (contract commit); briefs IB and F fill in the bodies.
+
+    def _check_incidents(self) -> list[RaceEvent]:
+        """Brief IB: open overdue incidents (tick, RUNNING only, also while finishing)."""
+        return []
+
+    def _clear_incident(
+        self, car: _Car, by: Literal["crossing", "marshal", "race_end"], race_t: int
+    ) -> list[RaceEvent]:
+        """Brief IB: close ``car``'s open incident (a counted crossing, marshal, race end)."""
+        return []
+
+    def _close_incidents_at_end(self) -> list[RaceEvent]:
+        """Brief IB: close every open incident with ``by="race_end"`` before RaceFinished."""
+        return []
+
+    def _apply_pit_penalties(self) -> list[RaceEvent]:
+        """Brief F: mandatory pit stop penalties (PitMissed) before the final order."""
+        return []
+
+    def _record_fuel_lap(self, car: _Car) -> None:
+        """Brief F: append the fuel level at the end of the lap just counted."""
+
+    def _update_fuel_strategy(self) -> None:
+        """Brief F: refresh every car's FuelStrategy after a Status frame."""

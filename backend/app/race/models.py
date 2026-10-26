@@ -469,7 +469,7 @@ class Settings(BaseModel):
     race: RaceConfig = Field(default_factory=RaceConfig)
     # Keyboard shortcut overrides: action id -> key combo (e.g. "Shift+P"); "" disables the
     # action. Missing actions use the defaults defined by the frontend.
-    shortcuts: dict[str, str] = Field(default_factory=dict, max_length=100)
+    shortcuts: dict[str, str] = Field(default_factory=dict)  # limits: settings_errors()
 
 
 # --------------------------------------------------------------------------- track map
