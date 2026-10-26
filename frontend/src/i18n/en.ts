@@ -530,6 +530,26 @@ export const en = {
 
   // ---- fuel strategy, mandatory pit stops (roadmap wave 1): add keys only here
   'event.pit_missed': '{name} made {stops} of {required} mandatory pit stops',
+  'fuel.tabs': 'Chart panel view',
+  'fuel.tab.times': 'Lap times',
+  'fuel.tab.strategy': 'Fuel strategy',
+  'fuel.tab.chart': 'Fuel chart',
+  'fuel.col.car': 'Car',
+  'fuel.col.level': 'Fuel',
+  'fuel.col.laps_left': 'Laps left',
+  'fuel.col.to_go': 'To go',
+  'fuel.col.status': 'Status',
+  'fuel.laps_left_unknown': 'learning',
+  'fuel.ok': 'OK',
+  'fuel.in_pit': 'In the pits',
+  'fuel.must_pit': 'Pit by lap {lap}',
+  'fuel.stops': 'Stops {done}/{required}',
+  'fuel.empty': 'The fuel strategy appears once the Control Unit is in fuel mode and cars are on track.',
+  'fuel.chart.empty': 'The fuel chart fills in as cars complete laps.',
+  'fuel.chart.level': 'Fuel level',
+  'fuel.toast_pit_missed': '{name}: {stops} of {required} mandatory pit stops, +{seconds} s',
+  'tv.banner.pit_missed': '{code} MISSED PIT STOP',
+  'tv.banner.pit_missed_sub': '+{seconds} s penalty',
 
   // ---- keyboard shortcuts (roadmap wave 1): add keys only here
 }

@@ -9,6 +9,7 @@ const GLYPH: Partial<Record<BannerKind, string>> = {
   pit_in: 'PIT',
   pit_out: 'PIT',
   low_fuel: '!',
+  pit_missed: 'PIT',
   control: 'RC',
   false_start: 'FS',
 }

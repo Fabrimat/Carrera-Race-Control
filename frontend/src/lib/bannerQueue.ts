@@ -11,6 +11,7 @@ export type BannerKind =
   | 'pit_in'
   | 'pit_out'
   | 'low_fuel'
+  | 'pit_missed'
   | 'control'
   | 'final_lap'
   | 'chequered'
@@ -60,6 +61,7 @@ export const emptyQueue: QueueState = { active: null, queue: [] }
 
 const PRIORITY: Record<BannerKind, number> = {
   low_fuel: 1,
+  pit_missed: 3,
   pit_in: 1,
   pit_out: 1,
   overtake: 2,

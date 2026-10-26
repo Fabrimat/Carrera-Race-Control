@@ -208,6 +208,7 @@
 .tv-banner[data-kind='overtake'] { --accent: var(--color-go); --accent-ink: #04140a; }
 .tv-banner[data-kind='pit_in'], .tv-banner[data-kind='pit_out'] { --accent: var(--color-amber); --accent-ink: #1a1100; }
 .tv-banner[data-kind='low_fuel'] { --accent: var(--color-signal); }
+.tv-banner[data-kind='pit_missed'] { --accent: var(--color-signal); --accent-ink: #fff; }
 .tv-banner[data-kind='control'] { --accent: var(--color-amber); --accent-ink: #1a1100; }
 .tv-banner[data-kind='false_start'] { --accent: var(--color-signal); --accent-ink: #fff; }
 .tv-banner[data-kind='final_lap'] { --accent: #fff; --accent-ink: #000; }

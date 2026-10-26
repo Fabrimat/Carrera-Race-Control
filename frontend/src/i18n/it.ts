@@ -530,6 +530,26 @@ export const it: Messages = {
 
   // ---- fuel strategy, mandatory pit stops (roadmap wave 1): add keys only here
   'event.pit_missed': '{name} ha fatto {stops} soste obbligatorie su {required}',
+  'fuel.tabs': 'Vista del pannello grafici',
+  'fuel.tab.times': 'Tempi sul giro',
+  'fuel.tab.strategy': 'Strategia carburante',
+  'fuel.tab.chart': 'Grafico carburante',
+  'fuel.col.car': 'Auto',
+  'fuel.col.level': 'Carburante',
+  'fuel.col.laps_left': 'Giri residui',
+  'fuel.col.to_go': 'Al termine',
+  'fuel.col.status': 'Stato',
+  'fuel.laps_left_unknown': 'in calcolo',
+  'fuel.ok': 'OK',
+  'fuel.in_pit': 'Ai box',
+  'fuel.must_pit': 'Box entro il giro {lap}',
+  'fuel.stops': 'Soste {done}/{required}',
+  'fuel.empty': 'La strategia carburante compare quando la centralina è in modalità carburante e ci sono auto in pista.',
+  'fuel.chart.empty': 'Il grafico del carburante si riempie quando le auto completano i giri.',
+  'fuel.chart.level': 'Livello carburante',
+  'fuel.toast_pit_missed': '{name}: {stops} soste obbligatorie su {required}, +{seconds} s',
+  'tv.banner.pit_missed': '{code} SOSTA SALTATA',
+  'tv.banner.pit_missed_sub': '+{seconds} s di penalità',
 
   // ---- keyboard shortcuts (roadmap wave 1): add keys only here
 }

@@ -142,6 +142,16 @@ TEMPLATES: dict[str, list[str]] = {
         "La pole position è di {winner}!",
         "{session} in archivio, {winner} partirà in pole!",
     ],
+    "pit_missed": [
+        "{name} ha saltato la sosta obbligatoria, {penalty} di penalità!",
+        "Nessuna sosta per {name}, costa {penalty}!",
+        "{name} non ha fatto le soste richieste, aggiunti {penalty}.",
+    ],
+    "fuel_strategy": [
+        "{name} dovrà fermarsi entro il giro {lap}, la benzina non basta.",
+        "Strategia per {name}: serve una sosta entro il giro {lap}.",
+        "{name} non arriva in fondo senza rifornire, ai box entro il giro {lap}.",
+    ],
 }
 
 # Placeholders that never carry numbers: variants using only these may be cached as audio.

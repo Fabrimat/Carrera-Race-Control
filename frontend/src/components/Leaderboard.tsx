@@ -117,7 +117,7 @@ function CarName({ address, name, editable }: { address: number; name: string; e
   )
 }
 
-function FuelBar({ fuel }: { fuel: number }) {
+export function FuelBar({ fuel }: { fuel: number }) {
   const pct = Math.max(0, Math.min(15, fuel)) / 15
   const color = fuel <= 3 ? 'bg-signal' : fuel <= 7 ? 'bg-amber' : 'bg-go'
   return (

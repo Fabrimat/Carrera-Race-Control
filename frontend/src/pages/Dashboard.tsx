@@ -1,10 +1,10 @@
-import { useState, type ReactNode } from 'react'
+import { useState } from 'react'
 import { CommentaryFeed } from '../components/CommentaryFeed'
 import { ConnectionBar } from '../components/ConnectionBar'
 import { EventLog } from '../components/EventLog'
 import { Modal } from '../components/Modal'
 import { WhoDriving } from '../components/WhoDriving'
-import { LazyLapChart } from '../components/LazyLapChart'
+import { ChartPanel } from '../components/ChartPanel'
 import { Leaderboard } from '../components/Leaderboard'
 import { TrackMap } from '../components/TrackMap'
 import { RaceClock } from '../components/RaceClock'
@@ -14,23 +14,11 @@ import { SessionBar } from '../components/event/SessionBar'
 import { StartLights } from '../components/StartLights'
 import { useT } from '../i18n/useT'
 import { openTvWindow } from '../lib/desktop'
-import { seriesFromCars } from '../lib/series'
 import { useStore } from '../lib/store'
+import { useFuelToasts } from '../lib/useFuelToasts'
 
 /** A grid cell that may scroll inside itself at the full-viewport size, never the page. */
 const CELL = 'min-h-0 min-w-0'
-
-function Panel({ title, children, className = '' }: { title: string; children: ReactNode; className?: string }) {
-  return (
-    <section
-      aria-label={title}
-      className={`flex min-h-0 min-w-0 flex-col rounded-lg border border-line bg-panel p-3 ${className}`}
-    >
-      <h2 className="mb-1 shrink-0 text-xs font-bold uppercase tracking-widest text-dim">{title}</h2>
-      <div className="min-h-0 flex-1">{children}</div>
-    </section>
-  )
-}
 
 /**
  * Control panel. From 1200 px wide the whole dashboard is one full-viewport CSS grid (three
@@ -42,6 +30,7 @@ export function Dashboard() {
   const t = useT()
   const race = useStore((s) => s.race)
   const [who, setWho] = useState(false)
+  useFuelToasts()
   const starting = race.phase === 'starting'
   const lights = race.phase === 'starting' || race.start_light !== 0
 
@@ -108,9 +97,7 @@ export function Dashboard() {
 
       {/* band 3: lap chart, commentary, record and event log */}
       <div className="grid gap-2 min-[1200px]:min-h-0 min-[1200px]:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)_minmax(0,0.9fr)]">
-        <Panel title={t('chart.title')} className="h-72 min-[1200px]:h-auto">
-          <LazyLapChart series={seriesFromCars(race.cars, race.config.max_lap_ms)} height="100%" />
-        </Panel>
+        <ChartPanel race={race} className="h-72 min-[1200px]:h-auto" />
         <div className={`${CELL} min-h-72 min-[1200px]:min-h-0`}>
           <CommentaryFeed fill />
         </div>

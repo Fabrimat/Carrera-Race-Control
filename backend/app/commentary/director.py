@@ -47,6 +47,7 @@ from app.race.models import (
     CommentaryPriority,
     CommentarySettings,
     RaceEvent,
+    RaceStarted,
     RaceState,
     TrackRecord,
 )
@@ -193,6 +194,7 @@ class CommentaryDirector:
         self._warned_ffplay = False
         self._spoken: deque[str] = deque(maxlen=RECENT_LINES)
         self._recent_events: deque[dict[str, Any]] = deque(maxlen=5)
+        self._strategy_told: set[int] = set()  # cars already given their fuel strategy line
         self._event_info = event_info
         self._sponsor_interval = sponsor_interval_s
         self._last_sponsor_at = float("-inf")
@@ -220,7 +222,16 @@ class CommentaryDirector:
         try:
             cars = self._cars()
             lang = self._settings.language
-            cands = candidates(event, state, cars, self._settings.verbosity, lang)
+            if isinstance(event, RaceStarted):
+                self._strategy_told.clear()
+            cands = candidates(
+                event,
+                state,
+                cars,
+                self._settings.verbosity,
+                lang,
+                strategy_told=self._strategy_told,
+            )
             contexts = [
                 build_context(
                     state, cars, lang, c.address, c.template_key, list(self._recent_events)

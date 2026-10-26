@@ -251,3 +251,66 @@ def test_context_has_sector_facts():
     plain = build_context(RaceState(cars=st.cars), cars, "en", 1, "lap_completed", [])
     assert "best_sectors_overall" not in plain
     assert "current_lap_sectors" not in plain["involved_car"]
+
+
+# ---------------------------------------------------------------- fuel strategy / pit missed
+
+
+def _strategy_state(must_pit=True):
+    from app.race.models import FuelStrategy
+
+    st = state()
+    st.cars[0].fuel_strategy = FuelStrategy(
+        per_lap=2.0, laps_left=3.4, laps_to_go=8, must_pit=must_pit, pit_by_lap=6
+    )
+    return st
+
+
+@pytest.mark.parametrize("lang", ["it", "en"])
+def test_pit_missed_line_is_normal_priority_with_facts(lang):
+    from app.race.models import PitMissed
+
+    event = PitMissed(address=1, stops=0, required=1, penalty_ms=30_000)
+    [cand] = cands(event, lang=lang)
+    assert cand.priority == P.NORMAL and cand.template_key == "pit_missed"
+    assert "Blu" in cand.text
+    assert cand.facts["stops"] == 0 and cand.facts["penalty_ms"] == 30_000
+
+
+@pytest.mark.parametrize("lang", ["it", "en"])
+def test_strategy_line_once_per_car_per_race(lang):
+    told: set[int] = set()
+    st = _strategy_state()
+    event = ev_lap(address=0)
+
+    def run():
+        return candidates(event, st, CARS, Verbosity.NORMAL, lang, TemplateBook(), told)
+
+    first = [c for c in run() if c.template_key == "fuel_strategy"]
+    assert len(first) == 1 and first[0].priority == P.NORMAL
+    assert "Fulmine" in first[0].text
+    assert first[0].facts["must_pit"] and first[0].facts["pit_by_lap"] == 6
+    assert [c for c in run() if c.template_key == "fuel_strategy"] == []  # rate limited
+    told.clear()  # a new race
+    assert [c for c in run() if c.template_key == "fuel_strategy"]
+
+
+def test_no_strategy_line_without_must_pit_or_without_the_tracker():
+    told: set[int] = set()
+    event = ev_lap(address=0)
+    ok = candidates(event, _strategy_state(False), CARS, Verbosity.NORMAL, "en", None, told)
+    assert not [c for c in ok if c.template_key == "fuel_strategy"] and not told
+    no_tracker = candidates(event, _strategy_state(), CARS, Verbosity.NORMAL, "en")
+    assert not [c for c in no_tracker if c.template_key == "fuel_strategy"]
+    low = candidates(event, _strategy_state(), CARS, Verbosity.LOW, "en", None, told)
+    assert not [c for c in low if c.template_key == "fuel_strategy"] and not told
+
+
+def test_context_carries_laps_left_and_must_pit():
+    from app.commentary.context import build_context
+
+    st = _strategy_state()
+    st.cars[0].fuel = 6
+    ctx = build_context(st, CARS, "en", 0, "fuel_strategy", [])
+    car = ctx["involved_car"]
+    assert car["laps_left"] == 3.4 and car["must_pit"] is True and car["pit_by_lap"] == 6

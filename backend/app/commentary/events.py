@@ -30,6 +30,7 @@ from app.race.models import (
     LowFuel,
     PitEntry,
     PitExit,
+    PitMissed,
     PositionChange,
     RaceEvent,
     RaceFinished,
@@ -121,8 +122,14 @@ def candidates(
     verbosity: Verbosity,
     language: str = DEFAULT_LANGUAGE,
     book: TemplateBook | None = None,
+    strategy_told: set[int] | None = None,
 ) -> list[Candidate]:
-    """Commentary candidates for one event, already filtered by verbosity."""
+    """Commentary candidates for one event, already filtered by verbosity.
+
+    ``strategy_told`` is the set of cars that already got their fuel strategy line in this
+    race (the director owns it and clears it at the race start): each car gets at most one.
+    Without it no strategy line is produced.
+    """
     book = book or _default_book
     lang = language if language in LANGUAGES else DEFAULT_LANGUAGE
     prio = CommentaryPriority
@@ -204,8 +211,24 @@ def candidates(
         specs.extend(_false_start_specs(event, lang, name))
     elif isinstance(event, SessionFinished):
         specs.extend(_session_specs(event, state, name))
+    elif isinstance(event, PitMissed):
+        fields = {
+            "name": name(event.address),
+            "stops": speech.say_number(event.stops, lang),
+            "required": speech.say_number(event.required, lang),
+            "penalty": speech.say_lap_time(event.penalty_ms, lang),
+        }
+        facts = {
+            "driver": name(event.address),
+            "stops": event.stops,
+            "required": event.required,
+            "penalty_ms": event.penalty_ms,
+        }
+        specs.append(("pit_missed", prio.NORMAL, fields, facts, event.address))
     elif isinstance(event, LapCompleted):
         specs.extend(_lap_specs(event, state, verbosity, lang, name))
+        if strategy_told is not None:
+            specs.extend(_strategy_specs(event, state, verbosity, strategy_told, lang, name))
     elif isinstance(event, SectorCompleted):
         specs.extend(_sector_specs(event, state, verbosity, lang, name))
 
@@ -300,6 +323,38 @@ def _lap_specs(
     if verbosity == Verbosity.HIGH and event.lap_number % 2 == 0:
         return [("lap_completed", prio.LOW, fields, facts, event.address)]
     return []
+
+
+def _strategy_specs(
+    event: LapCompleted,
+    state: RaceState,
+    verbosity: Verbosity,
+    told: set[int],
+    lang: str,
+    name: Callable[[int], str],
+) -> list[_Spec]:
+    """One line per car and race when its fuel does not last to the finish (``must_pit``)."""
+    if event.address in told:
+        return []
+    car = _car_state(state, event.address)
+    strategy = car.fuel_strategy if car is not None else None
+    if strategy is None or not strategy.must_pit or strategy.pit_by_lap is None:
+        return []
+    prio = CommentaryPriority
+    if not _keep("fuel_strategy", prio.NORMAL, verbosity):
+        return []
+    told.add(event.address)
+    fields = {
+        "name": name(event.address),
+        "lap": speech.say_number(strategy.pit_by_lap, lang),
+    }
+    facts = {
+        "driver": name(event.address),
+        "must_pit": True,
+        "pit_by_lap": strategy.pit_by_lap,
+        "laps_left": round(strategy.laps_left, 1) if strategy.laps_left is not None else None,
+    }
+    return [("fuel_strategy", prio.NORMAL, fields, facts, event.address)]
 
 
 def _sector_specs(
