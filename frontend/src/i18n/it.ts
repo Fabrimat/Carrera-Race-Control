@@ -660,6 +660,14 @@ export const it: Messages = {
   'shortcuts.problem.reserved': "Il browser riserva questa combinazione: scegline un'altra.",
 
   // ---- responsive layouts, pit wall (roadmap wave 2): add keys only here
+  'layout.menu': 'Menu',
+  'layout.menu_close': 'Chiudi il menu',
+  'layout.collapse': 'Nascondi {title}',
+  'layout.expand': 'Mostra {title}',
+  'pit.show_map': 'Mappa',
+  'pit.close_map': 'Chiudi',
+  'pit.latest': 'Ultimi commenti',
+  'pit.full_dashboard': 'Apri il pannello completo',
 
   // ---- controller settings, pairing, garage (roadmap wave 2): add keys only here
   'event.car_paired': '{name} è abbinata alla pulsantiera {controller}',

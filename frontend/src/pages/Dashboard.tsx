@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react'
+import { Collapsible } from '../components/Collapsible'
+import { PitWall } from '../components/PitWall'
 import { CommentaryFeed } from '../components/CommentaryFeed'
 import { ConnectionBar } from '../components/ConnectionBar'
 import { EventLog } from '../components/EventLog'
@@ -16,6 +18,7 @@ import { StartLights } from '../components/StartLights'
 import { useT } from '../i18n/useT'
 import { incidentPlace, incidentSector } from '../lib/incidents'
 import { openTvWindow } from '../lib/desktop'
+import { useLayout } from '../lib/layout'
 import { useStore } from '../lib/store'
 import { useFuelToasts } from '../lib/useFuelToasts'
 
@@ -25,13 +28,16 @@ const CELL = 'min-h-0 min-w-0'
 /**
  * Control panel. From 1200 px wide the whole dashboard is one full-viewport CSS grid (three
  * bands: status and controls / leaderboard and map / chart, commentary and logs) and the page
- * never scrolls; individual panels scroll inside themselves. Below that it falls back to a
- * stacked layout.
+ * never scrolls; individual panels scroll inside themselves. Ultrawide screens spread the same
+ * panels over four columns (see index.css), tablets get a stacked layout with collapsible
+ * panels and phones the pit wall (lib/layout.ts).
  */
 export function Dashboard() {
   const t = useT()
   const race = useStore((s) => s.race)
   const [who, setWho] = useState(false)
+  const layout = useLayout()
+  const [fullOnPhone, setFullOnPhone] = useState(false)
   useFuelToasts()
   const starting = race.phase === 'starting'
   const lights = race.phase === 'starting' || race.start_light !== 0
@@ -54,13 +60,15 @@ export function Dashboard() {
     })
   }, [t])
 
+  if (layout === 'phone' && !fullOnPhone) return <PitWall onFull={() => setFullOnPhone(true)} />
+
   return (
     <div
       data-testid="dashboard"
-      className="relative flex flex-col gap-3 p-3 min-[1200px]:grid min-[1200px]:h-full min-[1200px]:grid-rows-[auto_minmax(0,1.45fr)_minmax(0,1fr)] min-[1200px]:overflow-hidden min-[1200px]:gap-2"
+      className="dash relative flex flex-col gap-3 p-3 min-[1200px]:grid min-[1200px]:h-full min-[1200px]:grid-rows-[auto_minmax(0,1.45fr)_minmax(0,1fr)] min-[1200px]:overflow-hidden min-[1200px]:gap-2"
     >
       {/* band 1: event session bar (only when relevant), then connection, clock and lights, race controls */}
-      <div className="flex min-w-0 flex-col gap-2">
+      <div className="dash-band-top flex min-w-0 flex-col gap-2">
       <SessionBar />
       <div
         data-testid="dashboard-top"
@@ -96,9 +104,9 @@ export function Dashboard() {
       </div>
 
       {/* band 2: leaderboard (with sectors) and the live map */}
-      <div className="grid gap-2 min-[1200px]:min-h-0 min-[1200px]:grid-cols-[minmax(0,1.9fr)_minmax(0,1fr)]">
+      <div className="dash-band grid gap-2 min-[900px]:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)] min-[1200px]:min-h-0 min-[1200px]:grid-cols-[minmax(0,1.9fr)_minmax(0,1fr)]">
         <section
-          className={`${CELL} overflow-auto rounded-lg border border-line bg-panel-2/40 p-2`}
+          className={`dash-leader ${CELL} overflow-auto rounded-lg border border-line bg-panel-2/40 p-2`}
           aria-label={t('leaderboard.title')}
         >
           <Leaderboard
@@ -113,21 +121,27 @@ export function Dashboard() {
             bestSectors={race.best_sectors}
           />
         </section>
-        <TrackMap className="flex min-h-72 min-[1200px]:h-full min-[1200px]:min-h-0 flex-col overflow-hidden !p-3 [&>svg]:min-h-0 [&>svg]:flex-1" />
+        <TrackMap className="dash-map flex min-h-72 min-[1200px]:h-full min-[1200px]:min-h-0 flex-col overflow-hidden !p-3 [&>svg]:min-h-0 [&>svg]:flex-1" />
       </div>
 
       {/* band 3: lap chart, commentary, record and event log */}
-      <div className="grid gap-2 min-[1200px]:min-h-0 min-[1200px]:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)_minmax(0,0.9fr)]">
-        <ChartPanel race={race} className="h-72 min-[1200px]:h-auto" />
-        <div className={`${CELL} min-h-72 min-[1200px]:min-h-0`}>
-          <CommentaryFeed fill />
-        </div>
-        <div className={`${CELL} flex flex-col gap-2`}>
-          <TrackRecordPanel />
-          <div className="min-h-60 flex-1 min-[1200px]:min-h-0">
-            <EventLog fill />
+      <div className="dash-band grid gap-2 min-[900px]:grid-cols-2 min-[1200px]:min-h-0 min-[1200px]:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)_minmax(0,0.9fr)]">
+        <Collapsible title={t('chart.title')} testId="collapse-chart">
+          <ChartPanel race={race} className="dash-chart h-72 min-[1200px]:h-auto" />
+        </Collapsible>
+        <Collapsible title={t('commentary.title')} testId="collapse-commentary">
+          <div className={`dash-comm ${CELL} min-h-72 min-[1200px]:min-h-0`}>
+            <CommentaryFeed fill />
           </div>
-        </div>
+        </Collapsible>
+        <Collapsible title={t('events.title')} testId="collapse-events">
+          <div className={`dash-log ${CELL} flex flex-col gap-2`}>
+            <TrackRecordPanel />
+            <div className="min-h-60 flex-1 min-[1200px]:min-h-0">
+              <EventLog fill />
+            </div>
+          </div>
+        </Collapsible>
       </div>
 
       <MarshalPanel />

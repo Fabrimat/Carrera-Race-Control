@@ -660,6 +660,14 @@ export const en = {
   'shortcuts.problem.reserved': 'The browser reserves this combination; pick another one.',
 
   // ---- responsive layouts, pit wall (roadmap wave 2): add keys only here
+  'layout.menu': 'Menu',
+  'layout.menu_close': 'Close menu',
+  'layout.collapse': 'Hide {title}',
+  'layout.expand': 'Show {title}',
+  'pit.show_map': 'Map',
+  'pit.close_map': 'Close',
+  'pit.latest': 'Latest commentary',
+  'pit.full_dashboard': 'Open the full dashboard',
 
   // ---- controller settings, pairing, garage (roadmap wave 2): add keys only here
   'event.car_paired': '{name} is paired with controller {controller}',

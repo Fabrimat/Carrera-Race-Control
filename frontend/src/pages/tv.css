@@ -17,7 +17,7 @@
   height: 100vh;
   overflow: hidden;
   /* 1em = 1/96 of the width, or 1/54 of the height when the window is taller than 16:9. */
-  font-size: min(calc(100vw / 96), calc(100vh / 54));
+  font-size: max(min(calc(100vw / 96), calc(100vh / 54)), 6px);
   color: var(--tv-ink);
   background:
     radial-gradient(120em 60em at 78% -10%, rgba(255, 59, 48, 0.16), transparent 60%),
@@ -189,6 +189,32 @@
 }
 .tv-map > section > h2 { font-size: 0.8em; letter-spacing: 0.24em; margin-bottom: 0.4em; }
 .tv-map svg { flex: 1; min-height: 0; max-height: none; filter: drop-shadow(0 0 0.8em rgba(0, 0, 0, 0.6)); }
+
+/*
+ * Responsive variants (layout class on <html data-layout>, see lib/layout.ts). 720p to 4K are the
+ * same 16:9 scale of themselves; the rules below cover the other shapes.
+ */
+/* 21:9 and wider: a wider tower and more side margin so the map is not stretched edge to edge. */
+[data-layout=ultrawide] .tv-main { grid-template-columns: 36em minmax(0, 1fr); padding-inline: 3.6em; }
+[data-layout=ultrawide] .tv-top { padding-inline: 3.6em; }
+[data-layout=ultrawide] .tv-lower { left: 3.6em; }
+/* Portrait (tablet, phone): the em follows the width and the tower sits above the map. */
+[data-layout=tablet-portrait] .tv-root, [data-layout=phone] .tv-root {
+  font-size: max(calc(100vw / 50), 6px);
+}
+[data-layout=phone] .tv-root { font-size: max(calc(100vw / 38), 6px); }
+[data-layout=tablet-portrait] .tv-main, [data-layout=phone] .tv-main {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  padding: 0.6em 1em 8em;
+}
+[data-layout=tablet-portrait] .tv-root, [data-layout=phone] .tv-root { grid-template-columns: minmax(0, 1fr); }
+[data-layout=tablet-portrait] .tv-top, [data-layout=phone] .tv-top {
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); padding-inline: 1em; gap: 0.6em;
+}
+[data-layout=tablet-portrait] .tv-tower, [data-layout=phone] .tv-tower { min-width: 0; }
+[data-layout=phone] .tv-top-left .tv-mode, [data-layout=phone] .tv-top-left .tv-session { display: none; }
+[data-layout=tablet-portrait] .tv-lower, [data-layout=phone] .tv-lower { left: 1em; width: calc(100% - 2em); }
 
 /* ------------------------------------------------------------------ overlays */
 .tv-lower { position: absolute; left: 1.8em; bottom: 6.2em; z-index: 20; width: 52em; pointer-events: none; }
