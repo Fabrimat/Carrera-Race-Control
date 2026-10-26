@@ -1,15 +1,17 @@
 import { useState } from 'react'
+import { ControllerFields } from '../components/ControllerFields'
 import { DriverAvatar } from '../components/DriverAvatar'
 import { PhotoCapture } from '../components/PhotoCapture'
 import { WhoDriving } from '../components/WhoDriving'
 import { useT } from '../i18n/useT'
 import { api } from '../lib/api'
 import { bumpPhoto, guardedDriver, MAX_DRIVER_BIO, MAX_DRIVER_NAME, MAX_DRIVER_NICKNAME } from '../lib/drivers'
+import { EMPTY_CONTROLLER, isEmptyController } from '../lib/controller'
 import { guarded } from '../lib/errors'
 import { refreshEventData } from '../lib/eventData'
 import type { PreparedPhoto } from '../lib/photo'
 import { useStore } from '../lib/store'
-import type { Driver } from '../lib/types'
+import type { ControllerSettings, Driver } from '../lib/types'
 
 /** `undefined` = photo untouched, `null` = remove it, else a new photo to upload. */
 type PhotoEdit = PreparedPhoto | null | undefined
@@ -20,6 +22,7 @@ function DriverForm({ driver, onDone }: { driver: Driver | null; onDone: () => v
   const [nickname, setNickname] = useState(driver?.nickname ?? '')
   const [bio, setBio] = useState(driver?.bio ?? '')
   const [photo, setPhoto] = useState<PhotoEdit>(undefined)
+  const [ctl, setCtl] = useState<ControllerSettings>(driver?.controller ?? { ...EMPTY_CONTROLLER })
   const [touched, setTouched] = useState(false)
   const [saving, setSaving] = useState(false)
   const [bust] = useState(() => String(Date.now()))
@@ -33,7 +36,11 @@ function DriverForm({ driver, onDone }: { driver: Driver | null; onDone: () => v
     if (!valid || saving) return
     setSaving(true)
     const fields = { name: name.trim(), nickname: nickname.trim() || null, bio: bio.trim() }
-    let saved = await guardedDriver(() => (driver ? api.saveDriver({ ...driver, ...fields }) : api.createDriver(fields)))
+    // The handicap profile is saved with PUT only (a new driver does not take one yet).
+    const controller = isEmptyController(ctl) ? null : ctl
+    let saved = await guardedDriver(() =>
+      driver ? api.saveDriver({ ...driver, ...fields, controller }) : api.createDriver(fields),
+    )
     if (saved && photo !== undefined) {
       const id = saved.id
       const withPhoto = await guarded(() =>
@@ -91,6 +98,17 @@ function DriverForm({ driver, onDone }: { driver: Driver | null; onDone: () => v
       <div>
         <h4 className="mb-1 text-sm text-dim">{t('drivers.photo')}</h4>
         <PhotoCapture preview={preview} onChange={setPhoto} />
+      </div>
+      <div>
+        <h4 className="mb-1 text-sm text-dim">{t('ctl.driver_title')}</h4>
+        {driver ? (
+          <div className="rounded-md border border-line p-3">
+            <p className="mb-2 text-xs text-dim">{t('ctl.driver_hint')}</p>
+            <ControllerFields value={ctl} onChange={setCtl} mode="driver" testId="driver-ctl" presets />
+          </div>
+        ) : (
+          <p className="text-xs text-dim">{t('ctl.driver_save_first')}</p>
+        )}
       </div>
       <div className="flex gap-2">
         <button

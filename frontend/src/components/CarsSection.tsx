@@ -2,6 +2,9 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useT } from '../i18n/useT'
 import { useLogos } from '../lib/logos'
 import { CarLogo } from './CarLogo'
+import { ControllerFields, ControllerSummary } from './ControllerFields'
+import { PairingWizard } from './PairingWizard'
+import { sameController } from '../lib/controller'
 import { apiErrorMessage } from '../lib/errors'
 import {
   applyCarPatches,
@@ -36,6 +39,7 @@ export function sendableEdits(edits: CarEdits): CarEdits {
     if (patch.color !== undefined && !bad.color) ok.color = patch.color
     if (patch.nickname !== undefined) ok.nickname = patch.nickname
     if (patch.logo_id !== undefined) ok.logo_id = patch.logo_id
+    if (patch.controller !== undefined) ok.controller = patch.controller
     if (Object.keys(ok).length > 0) out[Number(addr)] = ok
   }
   return out
@@ -52,6 +56,7 @@ function dropSaved(edits: CarEdits, sent: CarEdits): CarEdits {
     if (was.color !== undefined && patch.color === was.color) delete rest.color
     if (was.nickname !== undefined && patch.nickname === was.nickname) delete rest.nickname
     if (was.logo_id !== undefined && patch.logo_id === was.logo_id) delete rest.logo_id
+    if (was.controller !== undefined && patch.controller && sameController(patch.controller, was.controller)) delete rest.controller
     if (Object.keys(rest).length > 0) next[Number(addr)] = rest
   }
   return next
@@ -68,6 +73,8 @@ export function CarsSection({ cars }: { cars: CarConfig[] }) {
   const logos = useLogos((s) => s.logos)
   const [edits, setEdits] = useState<CarEdits>({})
   const [status, setStatus] = useState<Status>({ kind: 'idle' })
+  const [openCtl, setOpenCtl] = useState<number | null>(null)
+  const [pairFor, setPairFor] = useState<number | 'new' | null>(null)
   const editsRef = useRef<CarEdits>({})
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -118,7 +125,17 @@ export function CarsSection({ cars }: { cars: CarConfig[] }) {
 
   return (
     <section className="rounded-lg border border-line bg-panel p-4">
-      <h3 className="mb-3 text-sm font-bold uppercase tracking-widest text-dim">{t('settings.cars')}</h3>
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <h3 className="text-sm font-bold uppercase tracking-widest text-dim">{t('settings.cars')}</h3>
+        <button
+          type="button"
+          data-testid="pair-new"
+          className="min-h-9 rounded-md border border-line bg-panel-2 px-3 text-sm font-bold hover:border-go"
+          onClick={() => setPairFor('new')}
+        >
+          {t('pair.open')}
+        </button>
+      </div>
       <div className="flex flex-col gap-2">
         {cars.map((c) => {
           const e = edits[c.address] ?? {}
@@ -126,9 +143,11 @@ export function CarsSection({ cars }: { cars: CarConfig[] }) {
           const color = e.color ?? c.color
           const nickname = e.nickname !== undefined ? e.nickname : c.nickname
           const logoId = e.logo_id !== undefined ? e.logo_id : c.logo_id
+          const controller = e.controller ?? c.controller
           const bad = validateCarPatch({ name, color })
           return (
-            <div key={c.address} className="grid grid-cols-[3rem_1fr_1fr_1fr_4rem] items-start gap-3" data-testid="car-row">
+            <div key={c.address} className="flex flex-col gap-1">
+            <div className="grid grid-cols-[3rem_1fr_1fr_1fr_4rem] items-start gap-3" data-testid="car-row">
               <span className="num pt-6 text-xl font-bold">{c.address + 1}</span>
               <Field label={t('settings.car_name')}>
                 <input
@@ -180,6 +199,41 @@ export function CarsSection({ cars }: { cars: CarConfig[] }) {
                 />
               </Field>
             </div>
+            <div className="ml-[3.75rem] flex flex-col gap-2">
+              <div className="flex flex-wrap items-center gap-3 text-sm">
+                <button
+                  type="button"
+                  aria-expanded={openCtl === c.address}
+                  data-testid="car-ctl-toggle"
+                  className="min-h-8 rounded-md border border-line bg-panel-2 px-3 font-bold hover:border-go"
+                  onClick={() => setOpenCtl(openCtl === c.address ? null : c.address)}
+                >
+                  {t('ctl.title')}
+                </button>
+                <ControllerSummary value={controller} />
+                <button
+                  type="button"
+                  data-testid="car-pair"
+                  aria-label={t('pair.open_for', { name })}
+                  className="min-h-8 rounded-md border border-line bg-panel-2 px-3 font-bold hover:border-go"
+                  onClick={() => setPairFor(c.address)}
+                >
+                  {t('pair.pair')}
+                </button>
+              </div>
+              {openCtl === c.address && (
+                <div className="rounded-md border border-line bg-panel-2/40 p-3">
+                  <ControllerFields
+                    value={controller}
+                    onChange={(next) => edit(c.address, { controller: next })}
+                    mode="car"
+                    testId={`car-ctl-${c.address}`}
+                    presets
+                  />
+                </div>
+              )}
+            </div>
+            </div>
           )
         })}
       </div>
@@ -193,6 +247,9 @@ export function CarsSection({ cars }: { cars: CarConfig[] }) {
           {statusText}
         </span>
       </p>
+      {pairFor !== null && (
+        <PairingWizard cars={cars} initialAddress={pairFor === 'new' ? null : pairFor} onClose={() => setPairFor(null)} />
+      )}
     </section>
   )
 }

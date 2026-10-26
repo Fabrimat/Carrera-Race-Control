@@ -6,11 +6,12 @@ import type { Route } from '../lib/route'
 import type { Language } from '../lib/types'
 import { AudioHint } from './AudioHint'
 
-const NAV: { href: string; key: 'nav.dashboard' | 'nav.drivers' | 'nav.history' | 'nav.settings' | 'nav.tv' | 'track.nav' | 'ev.nav'; name: Route['name'][] }[] = [
+const NAV: { href: string; key: 'nav.dashboard' | 'nav.drivers' | 'nav.history' | 'nav.settings' | 'nav.tv' | 'track.nav' | 'ev.nav' | 'nav.garage'; name: Route['name'][] }[] = [
   { href: '#/', key: 'nav.dashboard', name: ['dashboard'] },
   { href: '#/drivers', key: 'nav.drivers', name: ['drivers'] },
   { href: '#/history', key: 'nav.history', name: ['history', 'history-detail'] },
   { href: '#/event', key: 'ev.nav', name: ['event'] },
+  { href: '#/garage', key: 'nav.garage', name: ['garage'] },
   { href: '#/track', key: 'track.nav', name: ['track'] },
   { href: '#/settings', key: 'nav.settings', name: ['settings'] },
   { href: '#/tv', key: 'nav.tv', name: ['tv'] },
