@@ -8,17 +8,25 @@ This is an unofficial tool. See the [trademark notice](#trademarks).
 
 ![Race control dashboard in the middle of a simulated race: leaderboard with sector times, live track map, lap chart, commentary and event log](docs/images/dashboard-race-control.jpg)
 
+## Download
+
+Windows installers (x64 and ARM64) are attached to every [release](https://github.com/Fabrimat/Carrera-Race-Control/releases). The installer lets you choose the folder and whether to install for yourself or all users; see [Desktop app](#desktop-app-windows).
+
 ## Features
 
-- Live leaderboard: position, lap count, last and best lap (purple for the overall best), gap to leader, fuel bar, pit badge, animated position changes.
-- Race modes: free practice, N laps, timed race. Start, stop, reset and pace car controls, start lights.
-- Lap chart, event log, race history with CSV and JSON export.
-- TV mode (`#/tv`): fullscreen leaderboard plus the latest commentary line.
-- Commentator: priority director (never speaks over itself, drops stale lines, high priority lines interrupt), ElevenLabs streaming TTS with disk cache and character budgets, optional LLM written color lines with template fallback.
-- Settings for car names, colors and spoken nicknames, commentary options, budgets.
-- Robust connection handling: reconnect with backoff, clear error messages (for example "close the Carrera app"), graceful shutdown.
-- Raw session recording and replay, so a real race can be reused in tests.
-- UI and commentary in English and Italian.
+- **Live timing**: position, laps, last and best lap (purple for the overall best), gaps, sector times with Check Lanes, fuel bar, pit badge, animated position changes, track records per layout.
+- **Race control**: free practice, N laps, timed race; start lights, stop, reset, pace car. Fits a 16:9 screen without scrolling.
+- **Track map**: draw the layout in the editor or turn a photo of the track into a map with AI; cars move along it live, estimated between sensor crossings.
+- **TV mode** (`#/tv`): F1-style broadcast graphics for a second screen: timing tower, banners for overtakes, fastest laps, false starts, incidents and session results. The desktop app opens it fullscreen on another monitor.
+- **AI commentator**: lines written live by an LLM (Anthropic or OpenAI) or from templates, spoken with ElevenLabs; a priority director so it never talks over itself; character budgets.
+- **Event mode**: driver roster with photos, "Who's driving?" by tap, voice or crossing the line; programs with practice, qualifying and race; false start rules and penalties; event context for the commentator; JSON export and import.
+- **Incidents**: a car that stops on the track is flagged as probably off; marshal call panel with a "Back on track" button, OFF marker on the map, yellow flag on TV, commentator call; optional automatic pace car and incident penalties.
+- **Fuel strategy**: in the CU's fuel mode, laps left per car, "pit by lap N" warnings and a fuel chart; optional mandatory pit stops with penalties.
+- **Car brand logos**: a logo library (PNG, JPEG, WebP, SVG) shown in the leaderboard, TV tower and history.
+- **Keyboard shortcuts** for every main action, a `?` help overlay, rebinding in Settings.
+- Race history with CSV and JSON export; raw session recording and replay.
+- Robust connection handling: reconnect with backoff, clear error messages (for example "close the Carrera app").
+- Interface and commentary in English and Italian. A built-in simulator for everything without a track.
 
 ## Screenshots
 
@@ -273,7 +281,7 @@ frontend/
   e2e/                     Playwright smoke test
 desktop/                   Electron shell (Windows app), TV window, configuration window
 docs/PROTOCOL.md           REST and WebSocket contract
-PLAN.md                    product plan
+docs/ROADMAP.md            what comes next
 ```
 
 ## Trademarks
