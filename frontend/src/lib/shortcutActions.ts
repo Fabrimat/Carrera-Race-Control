@@ -122,12 +122,20 @@ function openTv(): void {
   else go('#/tv')
 }
 
+// A start request in flight: a quick double press must not send START to the CU twice.
+let starting = false
+
 const RUN: Record<string, () => void | Promise<void>> = {
   'race.start': () => {
     const race = useStore.getState().race
-    if (isRaceActive(race)) return
+    if (starting || isRaceActive(race)) return
+    starting = true
     unlock()
-    return guarded(() => startRace()).then(() => undefined)
+    return guarded(() => startRace())
+      .then(() => undefined)
+      .finally(() => {
+        starting = false
+      })
   },
   'race.stop': () => {
     if (!isRaceActive(useStore.getState().race)) return
