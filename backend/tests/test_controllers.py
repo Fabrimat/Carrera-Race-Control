@@ -746,3 +746,24 @@ async def test_new_races_store_their_layout_and_track_mode(tmp_path: Path) -> No
         assert (row["layout"], row["track_mode"]) == (ctl.settings.track.layout, "simulator")
 
     await running(ctl, body)
+
+
+async def test_no_writes_while_the_pairing_wizard_waits(tmp_path: Path) -> None:
+    track = FakeTrack()
+    ctl = make_controller(tmp_path, track)
+
+    async def body() -> None:
+        await ctl.connect("simulator", None, persist=False)
+        await settle(ctl)
+        await ctl.start_pairing(2, CarConfig(address=2, name="Fulmine"), None)
+        track.writes.clear()
+        set_car(ctl, 0, speed=7)  # the CU may be in CODE mode: held back
+        await settle(ctl)
+        assert track.writes == []
+        assert by_address(ctl, 0).pending
+        await ctl.cancel_pairing()  # the wizard ends: the held write goes out
+        await wait_for(lambda: track.writes == [("speed", 0, 7)])
+        await settle(ctl)
+        assert not by_address(ctl, 0).pending
+
+    await running(ctl, body)

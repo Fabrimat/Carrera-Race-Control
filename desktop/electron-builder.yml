@@ -38,8 +38,8 @@ mac:
   target: [dmg, zip]
   category: public.app-category.sports
   icon: build/icon-512.png # converted to .icns by electron-builder (needs >= 512 px)
-  # Unsigned and not notarized (no Apple developer account): see "macOS" in the README.
-  identity: null
+  # Ad-hoc signed only, not notarized (no Apple developer account): see "macOS" in the README.
+  identity: "-"  # ad-hoc signature: no certificate, but Apple Silicon needs one to launch
   hardenedRuntime: false
   gatekeeperAssess: false
   artifactName: Carrera-Race-Control-${version}-mac-${env.CARRERA_ARCH}.${ext}

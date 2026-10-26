@@ -1970,8 +1970,9 @@ class RaceController:
 
     def _can_write(self) -> TrackInterface | None:
         """The track to write to, or None (not connected, or a race is on: nothing is written
-        while STARTING, RUNNING or PAUSED)."""
-        if self.engine.phase in _ACTIVE:
+        while STARTING, RUNNING or PAUSED, nor while the pairing wizard waits: the CU may be
+        in CODE mode)."""
+        if self.engine.phase in _ACTIVE or self._waiting_pairing() is not None:
             return None
         return self._connected_track()
 
@@ -2097,6 +2098,7 @@ class RaceController:
         self._pairing = self._pairing.model_copy(update={"phase": phase, "error": error})
         self._pairing_ended_at = self._wall_clock()
         self._mark_dirty()
+        self._schedule_apply()  # writes held back while the wizard waited
         return self._pairing
 
     def _cancel_pairing_for_race(self) -> None:
