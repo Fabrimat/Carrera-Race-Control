@@ -18,6 +18,7 @@ import {
   type ProgramIssue,
 } from '../../lib/program'
 import type { CommentaryContext, EventProgram, RaceMode, SessionKind, SessionSpec } from '../../lib/types'
+import { SessionRules } from '../RulesEditor'
 import { ChipInput } from './ChipInput'
 
 const KINDS: SessionKind[] = ['practice', 'qualifying', 'race']
@@ -220,6 +221,8 @@ function SessionCard({
             ))}
           </select>
         </Field>
+        <SessionRules kind="incidents" value={spec.incidents ?? null} onChange={(incidents) => set({ incidents })} />
+        <SessionRules kind="pits" value={spec.pits ?? null} onChange={(pits) => set({ pits })} />
       </div>
     </li>
   )

@@ -1,5 +1,6 @@
 import type { TFunction } from '../i18n'
 import { priorityOf, type Banner, type BannerKind } from './bannerQueue'
+import { incidentPlace, incidentSector } from './incidents'
 import type { CarState, RaceEvent, RaceState, SessionResult } from './types'
 
 /** Visible time of each banner kind, ms. */
@@ -14,6 +15,8 @@ const DURATION: Record<BannerKind, number> = {
   final_lap: 4800,
   chequered: Infinity,
   false_start: 5200,
+  incident: 5000,
+  incident_cleared: 3000,
   session_result: Infinity,
 }
 
@@ -27,6 +30,8 @@ export interface BannerContext {
   lap: (ms: number | null | undefined) => string
   /** URL of the assigned driver's photo, when the car's driver has one. */
   photoFor?: (car: CarState) => string | null
+  /** RaceState.num_sectors, to name the sector of an incident. */
+  numSectors?: number
 }
 
 function make(kind: BannerKind, id: string, title: string, extra: Partial<Banner> = {}): Banner {
@@ -97,6 +102,20 @@ export function bannerForEvent(e: RaceEvent, c: BannerContext): Banner | null {
         color: car(e.address)?.color,
       })
     }
+    case 'incident_started': {
+      const sectors = c.numSectors ?? 1
+      const place = incidentSector(e, sectors) !== null ? incidentPlace(e, sectors, c.t) : null
+      return make('incident', id, c.t('tv.banner.incident'), {
+        subtitle: [name(e.address), place].filter(Boolean).join('  '),
+        color: car(e.address)?.color,
+        photo: photo(e.address),
+      })
+    }
+    case 'incident_cleared':
+      return make('incident_cleared', id, c.t('tv.banner.incident_cleared'), {
+        subtitle: name(e.address),
+        color: car(e.address)?.color,
+      })
     default:
       return null
   }

@@ -50,6 +50,7 @@ export function useBanners(codes: Map<number, string>): BannerView | null {
     const context = (): BannerContext => ({
       ...(ctx.current as BannerContext),
       cars: useStore.getState().race.cars,
+      numSectors: useStore.getState().race.num_sectors,
     })
     const seen = new WeakSet<object>(useStore.getState().events)
     let prev = useStore.getState().race

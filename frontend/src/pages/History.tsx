@@ -201,6 +201,8 @@ export function HistoryDetail({ id }: { id: number }) {
                 <th className="p-2 text-right">{t('leaderboard.best')}</th>
                 <th className="p-2 text-right">{t('history.avg')}</th>
                 <th className="p-2 text-right">{t('history.pit_stops')}</th>
+                <th className="p-2 text-right">{t('history.incidents')}</th>
+                <th className="p-2 text-right">{t('history.incident_lost')}</th>
               </tr>
             </thead>
             <tbody>
@@ -215,6 +217,11 @@ export function HistoryDetail({ id }: { id: number }) {
                   <td className="num p-2 text-right">{f.lap(c.best_lap_ms)}</td>
                   <td className="num p-2 text-right">{f.lap(c.avg_lap_ms)}</td>
                   <td className="num p-2 text-right">{c.pit_stops}</td>
+                  {/* Races saved before the incident feature lack these fields. */}
+                  <td className="num p-2 text-right" data-testid="result-incidents">{c.incidents ?? 0}</td>
+                  <td className="num p-2 text-right" data-testid="result-incident-lost">
+                    {(c.incident_lost_ms ?? 0) > 0 ? f.lap(c.incident_lost_ms) : '–'}
+                  </td>
                 </tr>
               ))}
             </tbody>

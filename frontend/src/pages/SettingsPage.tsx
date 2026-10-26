@@ -1,10 +1,11 @@
 import { useState, type ReactNode } from 'react'
 import { CarsSection } from '../components/CarsSection'
+import { IncidentRulesFields, PitRulesFields } from '../components/RulesEditor'
 import { useT } from '../i18n/useT'
 import { guarded } from '../lib/errors'
 import { saveSettings } from '../lib/settingsSave'
 import { useStore } from '../lib/store'
-import type { CommentarySettings, Language, Settings, Verbosity } from '../lib/types'
+import type { CommentarySettings, IncidentRules, Language, PitRules, Settings, Verbosity } from '../lib/types'
 
 const input = 'rounded-md border border-line bg-panel-2 px-3 py-2'
 const LANGS: Language[] = ['en', 'it']
@@ -35,6 +36,8 @@ interface Draft {
   ui_language?: Language
   track?: Settings['track']
   commentary?: Partial<CommentarySettings>
+  incidents?: IncidentRules
+  pits?: PitRules
 }
 
 export function SettingsPage() {
@@ -50,6 +53,11 @@ export function SettingsPage() {
     ui_language: draft?.ui_language ?? loaded.ui_language,
     track: draft?.track ?? loaded.track,
     commentary: { ...loaded.commentary, ...draft?.commentary },
+    race: {
+      ...loaded.race,
+      incidents: draft?.incidents ?? loaded.race.incidents,
+      pits: draft?.pits ?? loaded.race.pits,
+    },
   }
   const layoutOk = s.track.layout.trim().length >= 1 && s.track.layout.length <= 40
   const edit = (patch: Draft) => setDraft({ ...draft, ...patch })
@@ -66,6 +74,11 @@ export function SettingsPage() {
         ui_language: draft.ui_language ?? cur.ui_language,
         track: draft.track ?? cur.track,
         commentary: { ...cur.commentary, ...draft.commentary },
+        race: {
+          ...cur.race,
+          incidents: draft.incidents ?? cur.race.incidents,
+          pits: draft.pits ?? cur.race.pits,
+        },
       })),
     )
     setSaving(false)
@@ -107,6 +120,15 @@ export function SettingsPage() {
           />
         </Field>
         <p className="mt-2 text-sm text-dim">{t('settings.track_layout_hint')}</p>
+      </section>
+
+      <section className="rounded-lg border border-line bg-panel p-4" data-testid="race-rules">
+        <h3 className="mb-1 text-sm font-bold uppercase tracking-widest text-dim">{t('rules.title')}</h3>
+        <p className="mb-3 text-sm text-dim">{t('rules.hint')}</p>
+        <div className="flex flex-col gap-5">
+          <IncidentRulesFields value={s.race.incidents} onChange={(incidents) => edit({ incidents })} />
+          <PitRulesFields value={s.race.pits} onChange={(pits) => edit({ pits })} />
+        </div>
       </section>
 
       <section className="rounded-lg border border-line bg-panel p-4">

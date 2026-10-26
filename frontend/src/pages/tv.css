@@ -152,6 +152,7 @@
 .tv-tag[data-tag='pit'] { background: var(--color-amber); color: #1a1100; }
 .tv-tag[data-tag='fastest'] { background: var(--color-purple); color: #14001f; }
 .tv-tag[data-tag='record'] { background: var(--color-gold); color: #231a00; }
+.tv-tag[data-tag='off'] { background: var(--color-gold); color: #231a00; }
 .tv-tag[data-tag='fin'] { background: #fff; color: #000; }
 .tv-row[data-hl='true']::after {
   content: ''; position: absolute; inset: 0; pointer-events: none;
@@ -210,6 +211,8 @@
 .tv-banner[data-kind='low_fuel'] { --accent: var(--color-signal); }
 .tv-banner[data-kind='control'] { --accent: var(--color-amber); --accent-ink: #1a1100; }
 .tv-banner[data-kind='false_start'] { --accent: var(--color-signal); --accent-ink: #fff; }
+.tv-banner[data-kind='incident'] { --accent: var(--color-gold); --accent-ink: #231a00; }
+.tv-banner[data-kind='incident_cleared'] { --accent: var(--color-go); --accent-ink: #04140a; }
 .tv-banner[data-kind='final_lap'] { --accent: #fff; --accent-ink: #000; }
 .tv-banner-tag {
   display: grid; place-items: center; padding: 0 1.2em; min-width: 4.6em; font-size: 1.7em; font-weight: 800;

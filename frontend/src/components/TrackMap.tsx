@@ -120,7 +120,8 @@ function MapCanvas({ layout }: { layout: TrackLayout }) {
         const el = dotEls.current.get(c.address)
         if (!el) continue
         const pos = c.track_pos
-        if (!pos) {
+        // A car with an open incident is shown as a static OFF marker instead of the dot.
+        if (!pos || (c.incident && c.incident.s !== null)) {
           el.setAttribute('visibility', 'hidden')
           continue
         }
@@ -255,6 +256,28 @@ function MapCanvas({ layout }: { layout: TrackLayout }) {
               {stale ? '?' : (c.position ?? '')}
             </text>
             {stale && <title>{t('map.stale')}</title>}
+          </g>
+        )
+      })}
+      {ordered.map((c) => {
+        const s = c.incident?.s
+        if (s === null || s === undefined) return null
+        const [x, y] = at(s)
+        const name = c.driver_name || c.name
+        return (
+          <g
+            key={`off-${c.address}`}
+            transform={`translate(${x} ${y})`}
+            data-testid="incident-marker"
+            data-addr={c.address}
+            role="img"
+            aria-label={t('incident.marker', { name })}
+          >
+            <rect x={-0.08} y={-0.036} width={0.16} height={0.072} rx={0.016} fill="#ffd60a" stroke={c.color} strokeWidth={0.014} />
+            <text fontSize={0.036} fontWeight={800} textAnchor="middle" dominantBaseline="central" fill="#000">
+              {t('incident.badge')}
+            </text>
+            <title>{t('incident.marker', { name })}</title>
           </g>
         )
       })}

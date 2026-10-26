@@ -109,6 +109,7 @@ export function TvTower({ race, codes, mode, reduced }: Props) {
               </span>
               <span className="tv-mid">
                 <SectorPips car={c} race={race} />
+                {c.incident && <span className="tv-tag" data-tag="off" data-testid="tv-off">{t('tv.tower.off')}</span>}
                 {c.in_pit && <span className="tv-tag" data-tag="pit" data-testid="tv-pit">{t('tv.tower.pit')}</span>}
                 {isFastest && !isRecord && (
                   <span className="tv-tag" data-tag="fastest" data-testid="tv-fastest" title={t('tv.tower.fastest')}>FL</span>
