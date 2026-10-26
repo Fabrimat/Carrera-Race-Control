@@ -31,7 +31,7 @@ from app.race.models import (
     utcnow,
 )
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 # Version 1 baseline (also what a fresh database starts from before migrating).
 _SCHEMA = """
@@ -122,6 +122,12 @@ _MIGRATIONS: dict[int, tuple[str, ...]] = {
         )
         """,
     ),
+    # 6: the garage stats need the layout and the track mode of every race (old rows: NULL).
+    # ALTER TABLE ADD COLUMN is not idempotent: see _add_missing_columns.
+    6: (),
+}
+_ADDED_COLUMNS: dict[int, tuple[tuple[str, str, str], ...]] = {
+    6: (("races", "layout", "TEXT"), ("races", "track_mode", "TEXT")),
 }
 
 # One row per race with derived lap count and best valid lap. Used by list and detail.
@@ -211,6 +217,10 @@ class RaceStore:
             for target in range(version + 1, SCHEMA_VERSION + 1):
                 for statement in _MIGRATIONS[target]:
                     self._conn.execute(statement)
+                for table, column, kind in _ADDED_COLUMNS.get(target, ()):
+                    have = {r["name"] for r in self._conn.execute(f"PRAGMA table_info({table})")}
+                    if column not in have:
+                        self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {kind}")
                 self._conn.execute("UPDATE schema_version SET version = ?", (target,))
 
     def close(self) -> None:
@@ -220,13 +230,27 @@ class RaceStore:
 
     # ------------------------------------------------------------------ races
 
-    def create_race(self, config: RaceConfig, cars: list[CarConfig]) -> int:
-        """Insert a new race and return its id."""
+    def create_race(
+        self,
+        config: RaceConfig,
+        cars: list[CarConfig],
+        layout: str | None = None,
+        track_mode: str | None = None,
+    ) -> int:
+        """Insert a new race and return its id (``layout`` / ``track_mode`` feed the garage)."""
         cars_json = json.dumps([c.model_dump(mode="json") for c in cars])
         with self._write():
             cursor = self._conn.execute(
-                "INSERT INTO races (started_at, mode, config_json, cars_json) VALUES (?, ?, ?, ?)",
-                (utcnow().isoformat(), config.mode.value, config.model_dump_json(), cars_json),
+                "INSERT INTO races (started_at, mode, config_json, cars_json, layout, track_mode) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    utcnow().isoformat(),
+                    config.mode.value,
+                    config.model_dump_json(),
+                    cars_json,
+                    layout,
+                    track_mode,
+                ),
             )
             race_id = cursor.lastrowid
         if race_id is None:  # pragma: no cover - sqlite always sets lastrowid on INSERT
@@ -303,6 +327,40 @@ class RaceStore:
                 for lap in lap_rows
             ],
         }
+
+    def garage_stats(self) -> dict[int, dict[str, Any]]:
+        """Per controller address: races with a lap, laps, all-time best valid lap and layout.
+
+        Simulator races are excluded (as from the track records); rows from before schema 6
+        have no track mode and count. The history has no car identity, only the address.
+        """
+        where = "(r.track_mode IS NULL OR r.track_mode <> 'simulator')"
+        with self._lock:
+            totals = self._conn.execute(
+                "SELECT l.address AS address, COUNT(DISTINCT l.race_id) AS races, "
+                "COUNT(*) AS laps FROM laps l JOIN races r ON r.id = l.race_id "
+                f"WHERE {where} GROUP BY l.address"
+            ).fetchall()
+            bests = self._conn.execute(
+                "SELECT l.address AS address, l.lap_ms AS lap_ms, r.layout AS layout "
+                "FROM laps l JOIN races r ON r.id = l.race_id "
+                f"WHERE l.valid = 1 AND {where} ORDER BY l.lap_ms ASC, l.id ASC"
+            ).fetchall()
+        stats: dict[int, dict[str, Any]] = {
+            row["address"]: {
+                "races": row["races"],
+                "laps": row["laps"],
+                "best_lap_ms": None,
+                "best_lap_layout": None,
+            }
+            for row in totals
+        }
+        for row in bests:  # fastest first: the first row of an address is its best
+            entry = stats[row["address"]]
+            if entry["best_lap_ms"] is None:
+                entry["best_lap_ms"] = row["lap_ms"]
+                entry["best_lap_layout"] = row["layout"]
+        return stats
 
     # ------------------------------------------------------------------ settings
 

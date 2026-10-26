@@ -312,7 +312,6 @@ def test_v4_database_migrates_to_logos(tmp_path: Path) -> None:
         reopened.close()
     conn = sqlite3.connect(path)
     assert conn.execute("SELECT version FROM schema_version").fetchall() == [(SCHEMA_VERSION,)]
-    assert SCHEMA_VERSION == 5
     conn.close()
 
 

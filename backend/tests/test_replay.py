@@ -38,6 +38,18 @@ class ScriptedTrack:
     async def reset_timer(self):
         self.calls.append("reset")
 
+    async def set_speed(self, address, value):
+        self.calls.append(("speed", address, value))
+
+    async def set_brake(self, address, value):
+        self.calls.append(("brake", address, value))
+
+    async def set_fuel(self, address, value):
+        self.calls.append(("fuel", address, value))
+
+    async def press_code(self):
+        self.calls.append("code")
+
     async def close(self):
         self.calls.append("close")
 

@@ -17,6 +17,8 @@ Background tasks (started by :meth:`RaceController.start`, cancelled by :meth:`s
 * **state** broadcaster: coalesces "state changed" marks and sends the latest ``RaceState``
   at most every ``state_interval`` seconds (10/s).
 * **director**: ``CommentaryDirector.run()``.
+* **controller writer** (on demand): ONE serialized task writes the speed / brake / fuel
+  settings to the CU, see "controller settings" below.
 * **start watchdog** (per start): if the CU shows no light sequence within
   ``start_fallback_s`` after ``track.start()``, the engine is started with ``start_now()``.
 
@@ -61,18 +63,24 @@ from app.logos import MEDIA_TYPES, LogoStore
 from app.race.bundle import null_unknown_logos
 from app.race.engine import RaceEngine
 from app.race.models import (
+    DEFAULT_CAR_COLORS,
     CarConfig,
+    CarPaired,
     ClassificationRow,
     CommentaryLine,
+    ControllerSettings,
+    ControllerStatus,
     Driver,
     DriverAssigned,
     EventProgram,
     EventState,
     FalseStart,
+    GarageCar,
     IncidentStarted,
     LapCompleted,
     LayoutDraft,
     Logo,
+    PairingState,
     RaceConfig,
     RaceEvent,
     RaceFinished,
@@ -118,6 +126,10 @@ RESTART_POLL_S = 0.05
 CLOSE_TIMEOUT_S = 5.0
 COMMENTARY_HISTORY = 50
 ARM_TIMEOUT_S = 60  # "assign on next crossing" stays armed this long
+PAIRING_TIMEOUT_S = 60  # the pairing wizard waits this long for the coded car
+PAIRING_LINGER_S = 10  # a finished pairing stays in RaceState.pairing this long
+CONTROLLER_ADDRESSES = range(6)
+CONTROLLER_FIELDS = ("speed", "brake", "fuel")
 SEEDED_COUNTER = "settings:seeded"
 FALLBACK_NOTES = {
     "en": "OpenAI is selected but has no API key: this photo was read by Anthropic.",
@@ -349,6 +361,23 @@ class RaceController:
         # track is ours (we deployed it for an incident and will recall it).
         self._pace_owned = False
 
+        # Controller settings: what was last written to the CU (per address; a missing entry
+        # or a null field = unknown), the addresses being written right now, and the single
+        # background writer. ``_link_gen`` changes whenever the link is (re)established or
+        # lost, so a write that finishes after that is never recorded as applied.
+        self._applied: dict[int, ControllerSettings] = {}
+        self._writing: set[int] = set()
+        self._link_gen = 0
+        self._need_full_write = False  # send everything on the first Status of a link
+        self._apply_task: asyncio.Task[None] | None = None
+        self._apply_wanted = False
+        self._apply_force = False
+        self._writer_lock = asyncio.Lock()
+
+        # Pairing wizard (CU CODE button), see "pairing" below. Never persisted.
+        self._pairing: PairingState | None = None
+        self._pairing_ended_at: datetime | None = None
+
         # Event mode (programs and sessions): the active program of `self._event_state`.
         self._active_program: EventProgram | None = None
         self._false_start_restarted = False  # the "restart" rule presses START once per start
@@ -483,7 +512,8 @@ class RaceController:
     async def shutdown(self) -> None:
         """Cancel every task, close the track (bounded) and the store. Idempotent."""
         await self._cancel_watchdog()
-        tasks = [t for t in (*self._tasks, self._poll_task) if t is not None]
+        tasks = [t for t in (*self._tasks, self._poll_task, self._apply_task) if t is not None]
+        self._apply_task = None
         self._tasks = []
         self._poll_task = None
         for task in tasks:
@@ -520,6 +550,7 @@ class RaceController:
         state.track_record = self.track_record.model_copy() if self.track_record else None
         state.layout = self.settings.track.layout
         state.session = self._session_info()
+        state.pairing = self._pairing.model_copy() if self._pairing is not None else None
         if self._layout is not None:
             positions = estimate_positions(state, self._layout, state.race_time_ms)
             for car in state.cars:
@@ -553,6 +584,7 @@ class RaceController:
         while True:
             await asyncio.sleep(self._tick_interval)
             try:
+                self._tick_pairing()
                 events = self.engine.tick()
                 if events:
                     await self._process_events(events)
@@ -607,6 +639,7 @@ class RaceController:
                 await self.director.submit(session_event, state)
         if finished:
             self._apply_idle_config()
+            self._schedule_apply()  # changes made during the race are written now
         await self._sync_auto_pace_car(events)
         self._mark_dirty()
 
@@ -693,7 +726,9 @@ class RaceController:
 
     def _new_race_in_store(self, config: RaceConfig) -> None:
         try:
-            self.engine.race_id = self.store.create_race(config, self.settings.cars)
+            self.engine.race_id = self.store.create_race(
+                config, self.settings.cars, self.settings.track.layout, self.connection.mode
+            )
         except Exception:
             log.exception("could not create the race in the store")
             self.engine.race_id = None
@@ -724,8 +759,13 @@ class RaceController:
     async def _handle(self, msg: Timer | Status) -> None:
         before = self.engine.phase
         events = self.engine.handle(msg)
-        events.extend(self._crossing_assignment(msg, before))
+        paired, consumed = self._pairing_crossing(msg, before)
+        events.extend(paired)
+        if not consumed:  # a waiting pairing takes the crossing before "assign on next crossing"
+            events.extend(self._crossing_assignment(msg, before))
         after = self.engine.phase
+        if after in _ACTIVE:
+            self._cancel_pairing_for_race()  # e.g. START pressed on the CU while pairing
         if before in (RacePhase.IDLE, RacePhase.FINISHED) and after in _ACTIVE:
             # Physical START on the CU: the engine auto-prepared, record the race.
             log.info("race started from the Control Unit")
@@ -746,6 +786,9 @@ class RaceController:
                     self._sequence_seen = True
             changed = changed or msg != self._last_status
             self._last_status = msg
+            if self._need_full_write:  # the first Status of a (re)connected link
+                self._need_full_write = False
+                self._schedule_apply()
         else:
             changed = True
         if events:
@@ -816,6 +859,7 @@ class RaceController:
     async def _reconnect(self, track: TrackInterface, exc: BaseException) -> None:
         """Reconnect ``track`` with backoff; returns once connected. Cancel to abort."""
         self._set_connection(status="connecting", error=_describe(exc), error_code=_error_code(exc))
+        self._reset_applied()  # the CU may be power-cycled: it forgot what we wrote
         while True:
             delay = self._backoff[min(self._reconnect_attempt, len(self._backoff) - 1)]
             self._reconnect_attempt += 1
@@ -927,6 +971,7 @@ class RaceController:
             )
 
     async def _teardown(self) -> None:
+        self._reset_applied()
         await self._cancel_watchdog()
         task, self._poll_task = self._poll_task, None
         if task is not None:
@@ -953,6 +998,7 @@ class RaceController:
 
     async def start_race(self, config: RaceConfig | None = None) -> RaceState:
         track = self._require_track()
+        self._cancel_pairing_for_race()
         if self.engine.phase in _ACTIVE:
             # Close the race in progress before starting a new one.
             await self._process_events(self.engine.stop())
@@ -992,6 +1038,7 @@ class RaceController:
         self.engine.race_id = None
         self._sequence_seen = False
         self._mark_dirty()
+        self._schedule_apply()
 
     async def _start_watchdog(self, track: TrackInterface) -> None:
         # 1) The CU only armed (light 1, lights off): a second START begins the countdown.
@@ -1048,6 +1095,7 @@ class RaceController:
             except Exception as exc:
                 log.warning("reset command failed: %s", _describe(exc))
         self._mark_dirty()
+        self._schedule_apply()  # changes made during the race are written now
         return self.race_state()
 
     async def toggle_pace_car(self) -> RaceState:
@@ -1208,6 +1256,7 @@ class RaceController:
             self.tts.language_code = settings.commentary.language
         self._save_settings()
         self._mark_dirty()
+        self._schedule_apply()
         return self.settings
 
     # ------------------------------------------------------------------ logos
@@ -1382,6 +1431,7 @@ class RaceController:
         else:
             self._apply_idle_config()
         self._mark_dirty()
+        self._schedule_apply()
 
     # ------------------------------------------------------------------ event mode: drivers
     # Drivers roster, assignments (address -> driver id) and "assign on next crossing".
@@ -1411,6 +1461,7 @@ class RaceController:
         except Exception:
             log.exception("could not save the event state")
         self._mark_dirty()
+        self._schedule_apply()  # the assignment may change a controller's effective settings
         return self._event_state
 
     def _driver_map(self) -> dict[str, Driver]:
@@ -1478,14 +1529,21 @@ class RaceController:
         return self._save_driver(driver)
 
     def update_driver(self, driver_id: str, new: Driver) -> Driver:
-        """Replace name, nickname and bio. The id, photo flag and creation time are the
-        server's: whatever the body says about them is ignored."""
+        """Replace name, nickname, bio and the controller profile. The id, photo flag and
+        creation time are the server's: whatever the body says about them is ignored."""
         current = self.get_driver(driver_id)
-        return self._save_driver(
+        saved = self._save_driver(
             current.model_copy(
-                update={"name": new.name, "nickname": new.nickname or None, "bio": new.bio}
+                update={
+                    "name": new.name,
+                    "nickname": new.nickname or None,
+                    "bio": new.bio,
+                    "controller": new.controller,
+                }
             )
         )
+        self._schedule_apply()
+        return saved
 
     def delete_driver(self, driver_id: str) -> list[Driver]:
         self.get_driver(driver_id)
@@ -1856,3 +1914,329 @@ class RaceController:
             if source is not None:
                 grid = {row.address: (row.position, row.name) for row in source.classification}
         return build_event_commentary(program, spec, index, drivers, grid, self.cars_by_address())
+
+    # ------------------------------------------------------------------ controller settings
+    # docs/PROTOCOL.md "Roadmap wave 2" -> "Controller settings". The CU never reports the
+    # values back: ``_applied`` is what WE last wrote (reset on every link loss).
+
+    def effective_settings(self, address: int) -> tuple[ControllerSettings, str | None]:
+        """The car's settings with the assigned driver's non-null fields on top, and the
+        assigned driver's id (even when that driver has no profile)."""
+        car = self.cars_by_address().get(address)
+        base = car.controller if car is not None else ControllerSettings()
+        driver_id = self._event_state.assignments.get(address)
+        driver = self._driver_map().get(driver_id) if driver_id is not None else None
+        if driver is None:
+            return base.model_copy(), None
+        profile = driver.controller
+        if profile is not None:
+            base = base.model_copy(
+                update={f: v for f in CONTROLLER_FIELDS if (v := getattr(profile, f)) is not None}
+            )
+        return base.model_copy(), driver.id
+
+    def _is_pending(self, address: int, effective: ControllerSettings) -> bool:
+        if address in self._writing:
+            return True
+        applied = self._applied.get(address)
+        for field in CONTROLLER_FIELDS:
+            value = getattr(effective, field)
+            if value is not None and (applied is None or getattr(applied, field) != value):
+                return True
+        return False
+
+    def controller_statuses(self) -> list[ControllerStatus]:
+        """``GET /api/controllers``: works while disconnected."""
+        statuses = []
+        for address in CONTROLLER_ADDRESSES:
+            effective, driver_id = self.effective_settings(address)
+            applied = self._applied.get(address)
+            statuses.append(
+                ControllerStatus(
+                    address=address,
+                    effective=effective,
+                    applied=applied.model_copy() if applied is not None else None,
+                    pending=self._is_pending(address, effective),
+                    driver_id=driver_id,
+                )
+            )
+        return statuses
+
+    def _reset_applied(self) -> None:
+        """The link is (re)established or lost: the CU may have been power-cycled."""
+        self._applied.clear()
+        self._link_gen += 1
+        self._need_full_write = True
+
+    def _can_write(self) -> TrackInterface | None:
+        """The track to write to, or None (not connected, or a race is on: nothing is written
+        while STARTING, RUNNING or PAUSED)."""
+        if self.engine.phase in _ACTIVE:
+            return None
+        return self._connected_track()
+
+    def _any_pending(self) -> bool:
+        return any(
+            self._is_pending(address, self.effective_settings(address)[0])
+            for address in CONTROLLER_ADDRESSES
+        )
+
+    def _start_writer(self) -> asyncio.Task[None] | None:
+        task = self._apply_task
+        if task is not None and not task.done():
+            return task  # the running batch re-checks when it ends: triggers coalesce
+        try:
+            task = asyncio.get_running_loop().create_task(self._writer_loop(), name="cu-writer")
+        except RuntimeError:  # no event loop (synchronous caller): the next trigger writes
+            return None
+        self._apply_task = task
+        return task
+
+    def _schedule_apply(self) -> None:
+        """Trigger: write what differs from ``applied``. Never awaits, never raises."""
+        if self._can_write() is None or not self._any_pending():
+            return
+        self._apply_wanted = True
+        self._start_writer()
+
+    async def _writer_loop(self) -> None:
+        async with self._writer_lock:  # exactly one batch, one CU command in flight
+            while self._apply_wanted:
+                self._apply_wanted = False
+                force, self._apply_force = self._apply_force, False
+                try:
+                    done = await self._write_batch(force)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    log.exception("writing the controller settings failed")
+                    done = False
+                if not done and not self._apply_wanted:
+                    # Aborted: the rest stays pending until the next trigger. A trigger that
+                    # arrived during the pass (e.g. a new link's first Status) keeps the loop
+                    # going; only what this pass consumed was cleared.
+                    return
+
+    async def _write_batch(self, force: bool) -> bool:
+        """Write the differing (or, forced, every) non-null effective fields, one at a time.
+
+        Returns False when the batch was aborted by a failure (or a link change); the
+        rest stays pending. Re-checks the race phase and the link before every write.
+        """
+        forced = (
+            {
+                (address, field)
+                for address in CONTROLLER_ADDRESSES
+                for field in CONTROLLER_FIELDS
+                if getattr(self.effective_settings(address)[0], field) is not None
+            }
+            if force
+            else set()
+        )
+        for address in CONTROLLER_ADDRESSES:
+            for field in CONTROLLER_FIELDS:
+                track = self._can_write()
+                if track is None:
+                    return True  # not connected / a race started: stays pending, no error
+                value = getattr(self.effective_settings(address)[0], field)
+                if value is None:
+                    continue  # unset: never sent
+                applied = self._applied.get(address)
+                if (
+                    (address, field) not in forced
+                    and applied is not None
+                    and getattr(applied, field) == value
+                ):
+                    continue
+                gen = self._link_gen
+                self._writing.add(address)
+                try:
+                    await getattr(track, f"set_{field}")(address, value)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    log.warning(
+                        "writing %s=%d for controller %d failed, the rest stays pending: %s",
+                        field,
+                        value,
+                        address + 1,
+                        _describe(exc),
+                    )
+                    return False
+                finally:
+                    self._writing.discard(address)
+                if gen != self._link_gen:
+                    return False  # the link changed meanwhile: that write proves nothing
+                current = self._applied.get(address) or ControllerSettings()
+                self._applied[address] = current.model_copy(update={field: value})
+        return True
+
+    async def apply_controllers(self) -> list[ControllerStatus]:
+        """``POST /api/controllers/apply``: force-write every non-null effective field.
+
+        Joins the batch already in flight (which then runs one more, forced, pass)."""
+        self._require_track()
+        if self.engine.phase in _ACTIVE:
+            raise ControllerError(409, "A race is in progress", "busy")
+        self._apply_force = True
+        self._apply_wanted = True
+        task = self._start_writer()
+        if task is not None:
+            await asyncio.shield(task)
+        return self.controller_statuses()
+
+    # ------------------------------------------------------------------ pairing
+    # docs/PROTOCOL.md "Roadmap wave 2" -> "Pairing (car <-> controller)".
+
+    def _waiting_pairing(self) -> PairingState | None:
+        p = self._pairing
+        return p if p is not None and p.phase == "waiting" else None
+
+    def _end_pairing(self, phase: str, error: str | None = None) -> PairingState:
+        assert self._pairing is not None
+        self._pairing = self._pairing.model_copy(update={"phase": phase, "error": error})
+        self._pairing_ended_at = self._wall_clock()
+        self._mark_dirty()
+        return self._pairing
+
+    def _cancel_pairing_for_race(self) -> None:
+        if self._waiting_pairing() is not None:
+            log.info("pairing cancelled: a race started")
+            self._end_pairing("cancelled", "race started")
+
+    def _tick_pairing(self) -> None:
+        """Expiry of a waiting pairing, and the end of the linger of a finished one."""
+        p = self._pairing
+        if p is None:
+            return
+        now = self._wall_clock()
+        if p.phase == "waiting":
+            if self.engine.phase in _ACTIVE:
+                self._cancel_pairing_for_race()
+            elif now >= p.expires_at:
+                log.info("pairing timed out")
+                self._end_pairing("timeout")
+        elif self._pairing_ended_at is not None and now - self._pairing_ended_at >= timedelta(
+            seconds=PAIRING_LINGER_S
+        ):
+            self._pairing = None
+            self._pairing_ended_at = None
+            self._mark_dirty()
+
+    async def start_pairing(
+        self, target_address: int, car: CarConfig, from_address: int | None
+    ) -> PairingState:
+        track = self._require_track()
+        if self.engine.phase not in (RacePhase.IDLE, RacePhase.FINISHED):
+            raise ControllerError(409, "A race is in progress", "busy")
+        now = self._wall_clock()
+        replacing = self._waiting_pairing() is not None
+        pairing = PairingState(
+            phase="waiting",
+            target_address=target_address,
+            car=car.model_copy(update={"address": target_address}),
+            started_at=now,
+            expires_at=now + timedelta(seconds=PAIRING_TIMEOUT_S),
+            from_address=from_address,
+        )
+        # Waiting from here on, so a second POST during the CODE press replaces this one.
+        self._pairing = pairing
+        self._pairing_ended_at = None
+        self._mark_dirty()
+        if replacing:
+            return pairing  # CODE is already on: pressing it again would likely switch it off
+        try:
+            await track.press_code()
+        except Exception as exc:
+            log.warning("pressing CODE failed: %s", _describe(exc))
+            if self._pairing is pairing:
+                return self._end_pairing("failed", f"CODE press failed: {_describe(exc)}")
+            return self._pairing or pairing
+        return self._pairing if self._pairing is not None else pairing
+
+    async def cancel_pairing(self) -> PairingState:
+        """Cancel the wizard. Does not touch the CU (the user presses CODE there if needed)."""
+        if self._waiting_pairing() is None:
+            raise ControllerError(404, "No pairing is waiting", "not_found")
+        return self._end_pairing("cancelled")
+
+    async def confirm_pairing(self) -> PairingState:
+        """The user saw the CU's CODE LED stop blinking: complete the pairing by hand."""
+        pairing = self._waiting_pairing()
+        if pairing is None:
+            raise ControllerError(404, "No pairing is waiting", "not_found")
+        event = self._finish_pairing(pairing.detected_address)
+        await self._process_events([event])
+        assert self._pairing is not None
+        return self._pairing
+
+    def _pairing_crossing(
+        self, msg: Timer | Status, phase: RacePhase
+    ) -> tuple[list[RaceEvent], bool]:
+        """A start/finish crossing while the wizard waits. Returns (events, consumed): a
+        consumed Timer is not used by "assign on next crossing"."""
+        pairing = self._waiting_pairing()
+        if (
+            pairing is None
+            or not isinstance(msg, Timer)
+            or msg.sector != 1
+            or phase not in (RacePhase.IDLE, RacePhase.FINISHED)
+            or not 0 <= msg.address <= 5
+            or self._wall_clock() >= pairing.expires_at  # the tick loop times it out
+        ):
+            return [], False
+        if msg.address == pairing.target_address:
+            return [self._finish_pairing(msg.address)], True
+        # Another controller: only a hint, the wizard keeps waiting.
+        self._pairing = pairing.model_copy(update={"detected_address": msg.address})
+        self._mark_dirty()
+        return [], True
+
+    def _finish_pairing(self, detected: int | None) -> CarPaired:
+        """Store the profile at the target address, reset the old slot, write the settings."""
+        pairing = self._waiting_pairing()
+        assert pairing is not None
+        target = pairing.target_address
+        cars = {c.address: c for c in self.settings.cars}
+        cars[target] = pairing.car.model_copy(update={"address": target})
+        source = pairing.from_address
+        if source is not None and source != target and source in cars:
+            cars[source] = CarConfig(
+                address=source,
+                name=f"Car {source + 1}",
+                color=DEFAULT_CAR_COLORS[source % len(DEFAULT_CAR_COLORS)],
+            )
+        logo_id = cars[target].logo_id
+        if logo_id is not None and self.store.get_logo(logo_id) is None:
+            cars[target] = cars[target].model_copy(update={"logo_id": None})  # logo was deleted
+        ordered = [cars[a] for a in sorted(cars)]
+        self._pairing = pairing.model_copy(update={"detected_address": detected})
+        self._end_pairing("paired")
+        # Also saves, refreshes the engine and schedules the controller write.
+        self.update_settings(self.settings.model_copy(update={"cars": ordered}))
+        car = cars[target]
+        return CarPaired(
+            address=target,
+            name=car.nickname or car.name,
+            matches_target=detected in (None, target),
+        )
+
+    # ------------------------------------------------------------------ garage
+
+    def garage(self) -> list[GarageCar]:
+        """One entry per configured car with its all-time stats of that controller address."""
+        stats = self.store.garage_stats()
+        cars = []
+        for car in sorted(self.settings.cars, key=lambda c: c.address):
+            entry = stats.get(car.address, {})
+            cars.append(
+                GarageCar(
+                    address=car.address,
+                    car=car,
+                    races=entry.get("races", 0),
+                    laps=entry.get("laps", 0),
+                    best_lap_ms=entry.get("best_lap_ms"),
+                    best_lap_layout=entry.get("best_lap_layout"),
+                )
+            )
+        return cars

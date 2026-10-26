@@ -50,6 +50,7 @@ from app.track.base import (
     TrackConnectionError,
     TrackDisconnected,
     TrackErrorCode,
+    check_controller_setting,
 )
 
 logger = logging.getLogger(__name__)
@@ -425,6 +426,21 @@ class CarreraTrack:
 
     async def reset_timer(self) -> None:
         await self._command(lambda cu: cu.reset())
+
+    async def set_speed(self, address: int, value: int) -> None:
+        check_controller_setting(address, value)
+        await self._command(lambda cu: cu.setspeed(address, value))
+
+    async def set_brake(self, address: int, value: int) -> None:
+        check_controller_setting(address, value)
+        await self._command(lambda cu: cu.setbrake(address, value))
+
+    async def set_fuel(self, address: int, value: int) -> None:
+        check_controller_setting(address, value)
+        await self._command(lambda cu: cu.setfuel(address, value))
+
+    async def press_code(self) -> None:
+        await self._command(lambda cu: cu.press(ControlUnit.CODE_BUTTON_ID))
 
     @staticmethod
     def _safe_close(cu: Any) -> None:

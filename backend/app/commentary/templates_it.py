@@ -94,6 +94,11 @@ TEMPLATES: dict[str, list[str]] = {
         "{name} è al volante della macchina {car}.",
         "La macchina {car} va a {name}.",
     ],
+    "car_paired": [
+        "{name} è pronta sul controller {controller}.",
+        "Il controller {controller} è abbinato a {name}.",
+        "{name} risponde al controller {controller}.",
+    ],
     "idle": [
         "La pista è tranquilla, pronti per la prossima sfida?",
         "Tutto fermo in pista, i motori sono in attesa.",
