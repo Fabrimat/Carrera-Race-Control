@@ -34,6 +34,8 @@ export const emptyRace: RaceState = {
     max_lap_ms: 120000,
     low_fuel_threshold: 3,
     idle_after_s: 30,
+    incidents: { detect: true, overdue_factor: 2.5, auto_pace_car: false, penalty_s: 0 },
+    pits: { min_stops: 0, missed_penalty_s: 30 },
   },
   start_light: 0,
   race_time_ms: 0,

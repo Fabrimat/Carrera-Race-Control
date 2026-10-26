@@ -58,6 +58,8 @@ export function newSession(kind: SessionKind, existing: SessionSpec[]): SessionS
     duration_s: kind === 'race' ? 600 : 300,
     false_start: { action: 'warn', penalty_s: 5 },
     grid_from: null,
+    incidents: null,
+    pits: null,
   })
 }
 

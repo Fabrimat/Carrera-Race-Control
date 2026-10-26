@@ -60,6 +60,12 @@ export function describeEvent(
         sector: e.sector,
         time: lap(e.split_ms),
       })
+    case 'incident_started':
+      return t('event.incident_started', { name: name(e.address) })
+    case 'incident_cleared':
+      return t('event.incident_cleared', { name: name(e.address) })
+    case 'pit_missed':
+      return t('event.pit_missed', { name: name(e.address), stops: e.stops, required: e.required })
   }
 }
 

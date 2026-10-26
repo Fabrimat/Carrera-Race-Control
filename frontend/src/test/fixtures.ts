@@ -6,8 +6,8 @@ export function settingsResponse(over: Partial<SettingsResponse> = {}): Settings
   return {
     ui_language: 'en',
     cars: [
-      { address: 0, name: 'Car 1', color: '#e53935', nickname: null },
-      { address: 1, name: 'Car 2', color: '#1e88e5', nickname: null },
+      { address: 0, name: 'Car 1', color: '#e53935', nickname: null, logo_id: null },
+      { address: 1, name: 'Car 2', color: '#1e88e5', nickname: null, logo_id: null },
     ],
     commentary: {
       enabled: true,
@@ -23,6 +23,7 @@ export function settingsResponse(over: Partial<SettingsResponse> = {}): Settings
     },
     track: { mode: 'simulator', address: null, layout: 'Default' },
     race: emptyRace.config,
+    shortcuts: {},
     keys: { elevenlabs: false, anthropic: false, openai: false },
     ...over,
   }
@@ -69,6 +70,12 @@ export function car(over: Partial<CarState> & { address: number }): CarState {
     driver_id: null,
     driver_name: null,
     penalty_ms: 0,
+    logo_id: null,
+    incident: null,
+    incidents: 0,
+    incident_lost_ms: 0,
+    fuel_strategy: null,
+    fuel_laps: [],
     ...over,
   }
 }

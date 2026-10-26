@@ -7,6 +7,18 @@ export type Verbosity = 'low' | 'normal' | 'high'
 export type CommentaryPriority = 'low' | 'normal' | 'high'
 export type TrackMode = 'simulator' | 'ble' | 'serial'
 
+export interface IncidentRules {
+  detect: boolean
+  overdue_factor: number // 1.5..10, multiple of the expected stretch time
+  auto_pace_car: boolean
+  penalty_s: number // per incident, 0..120
+}
+
+export interface PitRules {
+  min_stops: number // 0 = no mandatory stop
+  missed_penalty_s: number // per missing stop, at the finish
+}
+
 export interface RaceConfig {
   mode: RaceMode
   target_laps: number
@@ -15,6 +27,8 @@ export interface RaceConfig {
   max_lap_ms: number
   low_fuel_threshold: number
   idle_after_s: number
+  incidents: IncidentRules
+  pits: PitRules
 }
 
 export interface CarConfig {
@@ -22,6 +36,7 @@ export interface CarConfig {
   name: string
   color: string
   nickname: string | null
+  logo_id: string | null // Logo.id, image at api.logoUrl(id)
 }
 
 export interface Lap {
@@ -61,6 +76,36 @@ export interface CarState {
   driver_id: string | null
   driver_name: string | null
   penalty_ms: number
+  // Roadmap wave 1
+  logo_id: string | null
+  incident: Incident | null // open incident
+  incidents: number
+  incident_lost_ms: number
+  fuel_strategy: FuelStrategy | null // only in fuel mode
+  fuel_laps: (number | null)[] // fuel level at each lap end
+}
+
+export interface Incident {
+  started_race_ms: number
+  source: 'overdue' | 'marshal'
+  from_sensor: number | null
+  to_sensor: number | null
+  s: number | null // place on the layout path, null without a map
+}
+
+export interface FuelStrategy {
+  per_lap: number | null
+  laps_left: number | null
+  laps_to_go: number | null
+  must_pit: boolean
+  pit_by_lap: number | null
+}
+
+export interface Logo {
+  id: string
+  name: string
+  media_type: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/svg+xml'
+  updated_at: string
 }
 
 export interface Crossing {
@@ -212,6 +257,29 @@ export type RaceEvent =
       kind: SessionKind
       order: number[]
     })
+  | (EventBase & {
+      type: 'incident_started'
+      address: number
+      source: 'overdue' | 'marshal'
+      from_sensor: number | null
+      to_sensor: number | null
+      s: number | null
+      count: number
+      penalty_ms: number
+    })
+  | (EventBase & {
+      type: 'incident_cleared'
+      address: number
+      by: 'crossing' | 'marshal' | 'race_end'
+      lost_ms: number
+    })
+  | (EventBase & {
+      type: 'pit_missed'
+      address: number
+      stops: number
+      required: number
+      penalty_ms: number
+    })
 
 export interface CommentaryLine {
   id: string
@@ -250,6 +318,7 @@ export interface Settings {
   commentary: CommentarySettings
   track: TrackSettings
   race: RaceConfig
+  shortcuts: Record<string, string> // action id -> combo overrides ("" disables)
 }
 
 export interface SettingsResponse extends Settings {
@@ -354,6 +423,8 @@ export interface SessionSpec {
   duration_s: number
   false_start: FalseStartRule
   grid_from: string | null
+  incidents: IncidentRules | null // null = settings.race.incidents
+  pits: PitRules | null // null = settings.race.pits
 }
 
 export interface CommentaryContext {

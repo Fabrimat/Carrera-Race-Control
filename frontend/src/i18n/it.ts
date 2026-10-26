@@ -521,4 +521,15 @@ export const it: Messages = {
   'tv.banner.false_start_penalty': 'penalità di {seconds} s',
   'tv.banner.false_start_restart': 'si ripete la sequenza',
   'tv.results.qualifying': 'Classifica delle qualifiche',
+
+  // ---- logos (roadmap wave 1): add keys only here
+
+  // ---- incidents, marshal calls (roadmap wave 1): add keys only here
+  'event.incident_started': '{name} è fuori pista',
+  'event.incident_cleared': '{name} è di nuovo in pista',
+
+  // ---- fuel strategy, mandatory pit stops (roadmap wave 1): add keys only here
+  'event.pit_missed': '{name} ha fatto {stops} soste obbligatorie su {required}',
+
+  // ---- keyboard shortcuts (roadmap wave 1): add keys only here
 }

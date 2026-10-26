@@ -521,4 +521,15 @@ export const en = {
   'tv.banner.false_start_penalty': '+{seconds} s penalty',
   'tv.banner.false_start_restart': 'restarting the sequence',
   'tv.results.qualifying': 'Qualifying classification',
+
+  // ---- logos (roadmap wave 1): add keys only here
+
+  // ---- incidents, marshal calls (roadmap wave 1): add keys only here
+  'event.incident_started': '{name} is off the track',
+  'event.incident_cleared': '{name} is back on track',
+
+  // ---- fuel strategy, mandatory pit stops (roadmap wave 1): add keys only here
+  'event.pit_missed': '{name} made {stops} of {required} mandatory pit stops',
+
+  // ---- keyboard shortcuts (roadmap wave 1): add keys only here
 }

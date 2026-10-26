@@ -90,11 +90,14 @@ RaceDetail = Omit<RaceSummary, "laps"> & {   // `laps` is the lap list here, not
 | `llm_unavailable` | 503 | `POST /api/layouts/from-photo` / `POST /api/event/transcribe`: no key for the selected provider, the key / vision model was rejected (HTTP 401, 403, 404), or the provider is unreachable, slow (45 s timeout), throttling (429) or failing (5xx): not the photo's fault, try again later |
 | `photo_unrecognised` | 422 | `from-photo`: no closed track found, unusable or too coarse reply, or the API rejected the request (other 4xx) |
 | `photo_busy` | 429 | `from-photo`: another photo conversion is already running (one at a time); retry shortly |
-| `image_too_large` | 413 | `from-photo`: image larger than 8 MB (decoded); driver photo larger than 2 MB |
-| `invalid_image` | 422 | `from-photo` / driver photo: not base64, or not JPEG / PNG / WebP (magic bytes checked) |
+| `image_too_large` | 413 | `from-photo`: image larger than 8 MB (decoded); driver photo larger than 2 MB; logo larger than 512 KB |
+| `invalid_image` | 422 | `from-photo` / driver photo / logo: not base64, or not JPEG / PNG / WebP (magic bytes checked); for logos also a rejected SVG |
 | `transcription_failed` | 422 | `POST /api/event/transcribe`: the provider rejected the audio (other 4xx) or returned no text |
 | `import_invalid` | 422 | `POST /api/import`: the bundle is not valid (wrong format, invalid section content); `detail` lists the problems |
 | `import_unsupported` | 422 | `POST /api/import`: the bundle `version` is newer than this app supports |
+| `logo_not_found` | 404 | unknown logo id |
+| `incident_not_found` | 404 | `POST /api/race/incidents/{address}/clear` for a car without an open incident |
+| `race_not_running` | 409 | incident report / clear while the race is not RUNNING or PAUSED |
 | `invalid_request` | 422 | the request body / query does not match the schema |
 | `forbidden_origin` | 403 | cross-origin state-changing request (see "Security") |
 
@@ -296,3 +299,102 @@ invalid content → 422 `import_invalid` with details. `merge` upserts by id/nam
 `replace` replaces each included section. The UI always shows the dry-run report before
 applying. The desktop app's configuration window has its own export of non-secret
 desktop settings.
+
+## Roadmap wave 1
+
+Logos, incidents, fuel strategy and keyboard shortcuts (docs/ROADMAP.md 1–3, 6). Shapes are
+in `models.py` ("Roadmap wave 1" fields of `CarConfig`, `CarState`, `RaceConfig`,
+`SessionSpec`, `Settings`, plus `Logo`, `Incident`, `FuelStrategy`, `IncidentRules`,
+`PitRules` and the events `incident_started`, `incident_cleared`, `pit_missed`). All new
+fields have defaults, so older settings, programs and export bundles still load.
+
+### Logos
+
+A library of brand logos; a car points at one with `CarConfig.logo_id` (several cars may
+share a logo). The engine copies it to `CarState.logo_id`. Files live in
+`DATA_DIR/logos/<id>.<ext>`, metadata in the store (schema v5, table `logos`).
+
+| Method | Path | Body | Response |
+|---|---|---|---|
+| GET | `/api/logos` | – | `{"logos": Logo[]}` by name |
+| POST | `/api/logos` | `{"name": str, "image_base64": str}` | `Logo` (201) |
+| PUT | `/api/logos/{id}` | `{"name": str, "image_base64": str \| null}` | `Logo` (rename, and replace the image when given) |
+| GET | `/api/logos/{id}/image` | – | the image, `ETag` + `Cache-Control: no-cache`, 304 on `If-None-Match` |
+| DELETE | `/api/logos/{id}` | – | `{"logos": Logo[]}`; cars using it get `logo_id = null` (settings saved) |
+
+- Ids: generated from the name like driver ids (`^[a-z0-9][a-z0-9-]{0,39}$`, unique).
+- Images: decoded ≤ 512 KB; PNG / JPEG / WebP by magic bytes, or SVG (`image/svg+xml`) when
+  the text parses as XML with an `<svg>` root and contains no `<script`, no `on*=` event
+  attributes, no `javascript:` and no `<foreignObject`. Otherwise `invalid_image`
+  (422); too big `image_too_large` (413); unknown id `logo_not_found` (404).
+- Every image response carries `X-Content-Type-Options: nosniff`; SVG responses also
+  `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; sandbox`. The UI
+  shows logos only through `<img>`.
+- `PUT /api/settings` with a `logo_id` that does not exist: `settings_invalid` (422).
+- Export bundles carry `CarConfig.logo_id` but never the images (like photos); a missing
+  logo is shown as no logo.
+
+### Incidents
+
+A car is **probably off** when, while the race is RUNNING, it is not in the pit, not
+finished, and has gone `overdue_factor` × the expected time of its current stretch
+(`segment_estimates["a>b"]` from its `last_crossing`, or its average lap when no Check Lanes)
+without a crossing. Cars with no estimate yet (first lap) are never flagged. The engine
+then sets `CarState.incident` (`source: "overdue"`), increments `incidents`, adds
+`IncidentRules.penalty_s` × 1000 to `penalty_ms` and emits `incident_started`. Detection
+uses the effective rules: `SessionSpec.incidents` while an event session runs, else
+`settings.race.incidents`; `detect: false` disables it (marshal reports still work).
+
+The incident clears on the car's next sensor crossing (`by: "crossing"`; that crossing
+still counts normally), on the marshal's button (`by: "marshal"`), or when the race ends
+(`by: "race_end"`); `incident_cleared.lost_ms` is the race time between start and clear and
+is added to `incident_lost_ms`. One open incident per car.
+
+| Method | Path | Body | Response |
+|---|---|---|---|
+| POST | `/api/race/incidents/{address}` | – | `RaceState` (marshal reports the car off: `source: "marshal"`) |
+| POST | `/api/race/incidents/{address}/clear` | – | `RaceState` (marshal: back on track) |
+
+Errors: `race_not_running` (409) unless the phase is RUNNING or PAUSED; `incident_not_found`
+(404) clearing a car without an open incident, or an address with no car; reporting a car
+that already has one is a no-op returning the state.
+
+Auto pace car (`auto_pace_car: true`): when the first incident opens the controller toggles
+the CU pace car once; when the last open incident clears it toggles it back. It only
+toggles back what it deployed itself, never while the race is not RUNNING, and new
+overdue detections are suspended while its pace car is out (marshal reports still
+work). A failed toggle is logged, not raised. Not yet verified on the real CU.
+
+Commentary: `incident_started` is high priority ("Rossi is off at the hairpin!" — use the
+driver name, the count when > 1), `incident_cleared` normal. Results (`RaceDetail.results`)
+keep `incidents` and `incident_lost_ms`.
+
+### Fuel strategy
+
+Only when the CU is in fuel mode (`RaceState.fuel_mode`); otherwise `fuel_strategy` is
+null and `fuel_laps` stays empty. At each line crossing the engine appends the car's fuel
+level to `fuel_laps` and updates `FuelStrategy`:
+- `per_lap`: average level drop over completed laps without a pit stop or refuel in them
+  (EWMA or mean of the last 5); null until one such lap exists.
+- `laps_left = fuel / per_lap` (null if `per_lap` is null or 0).
+- `laps_to_go`: LAPS mode `target_laps - laps`; TIMED mode `ceil(remaining_ms / avg_lap_ms)`;
+  PRACTICE null.
+- `must_pit = laps_to_go is not None and laps_left is not None and laps_left < laps_to_go`;
+  `pit_by_lap = laps + floor(laps_left)` when `must_pit`.
+
+Mandatory pit stops (`PitRules`, effective rules as for incidents): at the finish, a car
+with `pit_stops < min_stops` gets `(min_stops - pit_stops) × missed_penalty_s × 1000` added
+to `penalty_ms` and a `pit_missed` event, before the final order, `race_finished`, the
+event classification and the history results are computed. Commentary: a `must_pit` car
+may get a strategy line (rate-limited, at most once per car per race), and `pit_missed`
+a normal-priority line. The app never writes fuel values to the CU in this wave.
+
+### Keyboard shortcuts
+
+`Settings.shortcuts` maps an action id to a key combo, overriding the frontend defaults
+(`""` disables an action). Combos are `[Ctrl+][Alt+][Shift+]<key>` with `<key>` a
+`KeyboardEvent.key` value (single characters upper-case, e.g. `Shift+P`, `Space`, `Escape`,
+`F2`, `+`). The backend only checks `max 100 entries`, ids ≤ 40 and combos ≤ 40 characters
+(`settings_invalid` otherwise). Action ids, defaults, conflict detection and the `?` help
+overlay live in the frontend. Shortcuts never fire while typing in an input, textarea,
+select or contenteditable, nor while a modal other than the help overlay is open.

@@ -40,6 +40,24 @@ class RacePhase(StrEnum):
     FINISHED = "finished"
 
 
+class IncidentRules(BaseModel):
+    """Probable-incident detection (docs/PROTOCOL.md "Roadmap wave 1" -> "Incidents")."""
+
+    detect: bool = True
+    # A car is probably off once it is overdue on its current stretch by this multiple
+    # of the expected stretch time (CarState.segment_estimates).
+    overdue_factor: float = Field(default=2.5, ge=1.5, le=10.0)
+    auto_pace_car: bool = False  # deploy the CU pace car while an incident is open
+    penalty_s: int = Field(default=0, ge=0, le=120)  # added to penalty_ms per incident
+
+
+class PitRules(BaseModel):
+    """Mandatory pit stops (docs/PROTOCOL.md "Roadmap wave 1" -> "Fuel strategy")."""
+
+    min_stops: int = Field(default=0, ge=0, le=20)  # 0 = no mandatory stop
+    missed_penalty_s: int = Field(default=30, ge=0, le=600)  # per missing stop, at the finish
+
+
 class RaceConfig(BaseModel):
     mode: RaceMode = RaceMode.PRACTICE
     target_laps: int = Field(default=10, ge=1, le=999)  # used in LAPS mode
@@ -48,6 +66,8 @@ class RaceConfig(BaseModel):
     max_lap_ms: int = Field(default=120_000, ge=1000)  # longer = not a racing lap (no best lap)
     low_fuel_threshold: int = Field(default=3, ge=0, le=15)
     idle_after_s: int = Field(default=30, ge=5)
+    incidents: IncidentRules = Field(default_factory=IncidentRules)
+    pits: PitRules = Field(default_factory=PitRules)
 
 
 class CarConfig(BaseModel):
@@ -55,6 +75,7 @@ class CarConfig(BaseModel):
     name: str
     color: str = "#888888"  # CSS hex color
     nickname: str | None = None  # how the commentator calls the driver
+    logo_id: str | None = None  # Logo.id from the logo library (GET /api/logos/{id}/image)
 
 
 DEFAULT_CAR_COLORS = ["#e53935", "#1e88e5", "#43a047", "#fdd835", "#8e24aa", "#fb8c00"]
@@ -104,6 +125,26 @@ class TrackPosition(BaseModel):
     # stale = expected time exceeded by a wide margin (crash, deslot, stopped)
 
 
+class Incident(BaseModel):
+    """An open incident: the car is probably off the track or stopped."""
+
+    started_race_ms: int
+    source: Literal["overdue", "marshal"]  # detected by the engine, or reported by hand
+    from_sensor: int | None = None  # the stretch the car was driving (see TrackPosition)
+    to_sensor: int | None = None
+    s: float | None = None  # estimated place on the layout path (0..1), None without a map
+
+
+class FuelStrategy(BaseModel):
+    """Fuel prediction for one car (needs CU fuel mode). Levels are the CU's 0..15."""
+
+    per_lap: float | None = None  # levels used per lap, learned from laps without a pit stop
+    laps_left: float | None = None  # laps the current level lasts at per_lap
+    laps_to_go: int | None = None  # laps this car still has to drive (LAPS mode / estimate)
+    must_pit: bool = False  # cannot reach the finish without stopping
+    pit_by_lap: int | None = None  # latest lap to enter the pit, when must_pit
+
+
 class CarState(BaseModel):
     address: int
     name: str
@@ -139,6 +180,13 @@ class CarState(BaseModel):
     driver_id: str | None = None
     driver_name: str | None = None  # display name (nickname or name) of that driver
     penalty_ms: int = 0  # time penalties added to the result (false start, incidents)
+    # Roadmap wave 1
+    logo_id: str | None = None  # copied from CarConfig.logo_id
+    incident: Incident | None = None  # open incident, None while racing normally
+    incidents: int = 0  # incidents in this race
+    incident_lost_ms: int = 0  # time spent in closed incidents
+    fuel_strategy: FuelStrategy | None = None  # only in fuel mode
+    fuel_laps: list[int | None] = Field(default_factory=list)  # fuel level at each lap end
 
 
 class BestLapRecord(BaseModel):
@@ -310,6 +358,34 @@ class SessionFinished(_EventBase):
     order: list[int] = Field(default_factory=list)  # addresses by final classification
 
 
+class IncidentStarted(_EventBase):
+    type: Literal["incident_started"] = "incident_started"
+    address: int
+    source: Literal["overdue", "marshal"]
+    from_sensor: int | None = None
+    to_sensor: int | None = None
+    s: float | None = None
+    count: int  # incidents of this car in the race, this one included
+    penalty_ms: int = 0  # penalty added for it (IncidentRules.penalty_s)
+
+
+class IncidentCleared(_EventBase):
+    type: Literal["incident_cleared"] = "incident_cleared"
+    address: int
+    by: Literal["crossing", "marshal", "race_end"]
+    lost_ms: int  # race time between start and clear
+
+
+class PitMissed(_EventBase):
+    """At the finish: a car did fewer pit stops than PitRules.min_stops."""
+
+    type: Literal["pit_missed"] = "pit_missed"
+    address: int
+    stops: int
+    required: int
+    penalty_ms: int
+
+
 RaceEvent = Annotated[
     RaceStarted
     | LapCompleted
@@ -324,7 +400,10 @@ RaceEvent = Annotated[
     | SectorCompleted
     | FalseStart
     | DriverAssigned
-    | SessionFinished,
+    | SessionFinished
+    | IncidentStarted
+    | IncidentCleared
+    | PitMissed,
     Field(discriminator="type"),
 ]
 
@@ -388,6 +467,9 @@ class Settings(BaseModel):
     commentary: CommentarySettings = Field(default_factory=CommentarySettings)
     track: TrackSettings = Field(default_factory=TrackSettings)
     race: RaceConfig = Field(default_factory=RaceConfig)
+    # Keyboard shortcut overrides: action id -> key combo (e.g. "Shift+P"); "" disables the
+    # action. Missing actions use the defaults defined by the frontend.
+    shortcuts: dict[str, str] = Field(default_factory=dict, max_length=100)
 
 
 # --------------------------------------------------------------------------- track map
@@ -427,6 +509,18 @@ class LayoutDraft(BaseModel):
     notes: str = ""  # model's remarks (e.g. "start line guessed"), in the UI language
 
 
+# --------------------------------------------------------------------------- logos
+
+
+class Logo(BaseModel):
+    """A brand logo in the library, reusable by several cars (CarConfig.logo_id)."""
+
+    id: str = Field(min_length=1, max_length=40)  # generated by the backend, like Driver.id
+    name: str = Field(min_length=1, max_length=40)  # e.g. "Ferrari"
+    media_type: Literal["image/png", "image/jpeg", "image/webp", "image/svg+xml"]
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
 # --------------------------------------------------------------------------- event mode
 
 
@@ -459,6 +553,8 @@ class SessionSpec(BaseModel):
     duration_s: int = Field(default=300, ge=10, le=24 * 3600)
     false_start: FalseStartRule = Field(default_factory=FalseStartRule)
     grid_from: str | None = None  # session id whose classification sets the order shown
+    incidents: IncidentRules | None = None  # None = settings.race.incidents
+    pits: PitRules | None = None  # None = settings.race.pits
 
 
 class CommentaryContext(BaseModel):
