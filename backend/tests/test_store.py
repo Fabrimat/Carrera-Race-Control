@@ -363,3 +363,76 @@ def test_drivers_programs_and_event_state_roundtrip() -> None:
     assert store.load_event_state() == EventState()
     store.save_event_state(EventState(program_id="p1", assignments={0: "b"}))
     assert store.load_event_state().assignments == {0: "b"}
+
+
+# --------------------------------------------------------------------------- schema 6, garage
+
+
+def _downgrade_to_v5(path: Path) -> None:
+    """A version 5 database: the current one without the races.layout / track_mode columns."""
+    conn = sqlite3.connect(path)
+    conn.execute("ALTER TABLE races DROP COLUMN layout")
+    conn.execute("ALTER TABLE races DROP COLUMN track_mode")
+    conn.execute("UPDATE schema_version SET version = 5")
+    conn.commit()
+    conn.close()
+
+
+def test_v5_database_migrates_to_v6_and_old_rows_have_null_mode(tmp_path: Path) -> None:
+    path = tmp_path / "v5.db"
+    store = RaceStore(path)
+    race_id = store.create_race(RaceConfig(mode=RaceMode.PRACTICE), CARS)
+    store.add_lap(race_id, Lap(address=0, lap_number=1, lap_ms=5000, race_time_ms=5000))
+    store.close()
+    _downgrade_to_v5(path)
+
+    store = RaceStore(path)
+    try:
+        # The old row survives with NULL layout / mode and counts in the garage.
+        assert store.garage_stats()[0] == {
+            "races": 1,
+            "laps": 1,
+            "best_lap_ms": 5000,
+            "best_lap_layout": None,
+        }
+        new_id = store.create_race(RaceConfig(mode=RaceMode.PRACTICE), CARS, "oval", "ble")
+    finally:
+        store.close()
+    conn = sqlite3.connect(path)
+    assert conn.execute("SELECT version FROM schema_version").fetchall() == [(SCHEMA_VERSION,)]
+    rows = conn.execute("SELECT id, layout, track_mode FROM races ORDER BY id").fetchall()
+    assert rows == [(race_id, None, None), (new_id, "oval", "ble")]
+    # A half-applied migration (columns already there, version still 5) is tolerated.
+    conn.execute("UPDATE schema_version SET version = 5")
+    conn.commit()
+    conn.close()
+    RaceStore(path).close()
+
+
+def test_garage_stats_per_address_exclude_simulator_races() -> None:
+    store = RaceStore(":memory:")
+    try:
+        real = store.create_race(RaceConfig(mode=RaceMode.PRACTICE), CARS, "oval", "ble")
+        sim = store.create_race(RaceConfig(mode=RaceMode.PRACTICE), CARS, "oval", "simulator")
+        other = store.create_race(RaceConfig(mode=RaceMode.PRACTICE), CARS, "eight", "serial")
+        store.create_race(RaceConfig(mode=RaceMode.PRACTICE), CARS, "eight", "ble")  # no laps
+
+        def lap(race: int, address: int, number: int, ms: int, valid: bool = True) -> None:
+            store.add_lap(
+                race,
+                Lap(address=address, lap_number=number, lap_ms=ms, race_time_ms=ms, valid=valid),
+            )
+
+        lap(real, 0, 1, 6000)
+        lap(real, 0, 2, 5500)
+        lap(real, 0, 3, 4000, valid=False)  # invalid: not a best lap
+        lap(real, 1, 1, 7000)
+        lap(sim, 0, 1, 1000)  # simulator: excluded
+        lap(sim, 2, 1, 1000)
+        lap(other, 0, 1, 5000)
+        stats = store.garage_stats()
+        assert stats[0] == {"races": 2, "laps": 4, "best_lap_ms": 5000, "best_lap_layout": "eight"}
+        assert stats[1]["races"] == 1 and stats[1]["best_lap_layout"] == "oval"
+        assert 2 not in stats  # only simulator laps
+    finally:
+        store.close()

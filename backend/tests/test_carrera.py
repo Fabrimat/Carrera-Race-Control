@@ -22,6 +22,7 @@ class FakeCU:
     """Scriptable stand-in for carreralib.ControlUnit; records the calling threads."""
 
     PACE_CAR_ESC_BUTTON_ID = 1
+    CODE_BUTTON_ID = 4
     instances: list["FakeCU"] = []
     script: list = []  # items returned by poll(); exceptions are raised
     init_failures = 0
@@ -78,6 +79,18 @@ class FakeCU:
 
     def reset(self):
         self._enter("reset")
+        self._exit()
+
+    def setspeed(self, address, value):
+        self._enter(f"speed{address}={value}")
+        self._exit()
+
+    def setbrake(self, address, value):
+        self._enter(f"brake{address}={value}")
+        self._exit()
+
+    def setfuel(self, address, value):
+        self._enter(f"fuel{address}={value}")
         self._exit()
 
     def close(self):
@@ -467,3 +480,29 @@ async def test_late_first_attempt_does_not_clobber_second(monkeypatch):
     await track.close()
     assert all(closed_cu.closed.is_set() for closed_cu in SlowFirstCU.instances)
     await join_all_cu_threads()
+
+
+async def test_controller_settings_and_code_go_through_the_command_queue():
+    track = make()
+    await track.connect()
+    cu = FakeCU.instances[0]
+    await track.set_speed(2, 9)
+    await track.set_brake(0, 15)
+    await track.set_fuel(5, 0)
+    await track.press_code()
+    assert {"speed2=9", "brake0=15", "fuel5=0", "press4"} <= set(cu.calls)
+    await track.close()
+    assert len(cu.threads) == 1 and not cu.overlap
+
+
+@pytest.mark.parametrize("address, value", [(6, 1), (7, 1), (-1, 1), (0, 16), (0, -1)])
+async def test_controller_settings_are_validated_before_anything_is_sent(address, value):
+    track = make()
+    await track.connect()
+    cu = FakeCU.instances[0]
+    for call in (track.set_speed, track.set_brake, track.set_fuel):
+        with pytest.raises(ValueError):
+            await call(address, value)
+    await asyncio.sleep(0.02)
+    assert not [c for c in cu.calls if c.startswith(("speed", "brake", "fuel"))]
+    await track.close()

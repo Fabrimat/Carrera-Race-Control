@@ -99,6 +99,10 @@ class FakeTrack:
         self.starts = 0
         self.paces = 0
         self.resets = 0
+        self.writes: list[tuple[str, int, int]] = []  # (kind, address, value)
+        self.codes = 0
+        self.write_errors: list[BaseException] = []  # raised by the next writes, in order
+        self.write_gate: asyncio.Event | None = None  # when set, writes wait for it
         self._connected = False
         self.idle_status = status(0)
 
@@ -132,6 +136,25 @@ class FakeTrack:
 
     async def reset_timer(self) -> None:
         self.resets += 1
+
+    async def _write(self, kind: str, address: int, value: int) -> None:
+        if self.write_gate is not None:
+            await self.write_gate.wait()
+        if self.write_errors:
+            raise self.write_errors.pop(0)
+        self.writes.append((kind, address, value))
+
+    async def set_speed(self, address: int, value: int) -> None:
+        await self._write("speed", address, value)
+
+    async def set_brake(self, address: int, value: int) -> None:
+        await self._write("brake", address, value)
+
+    async def set_fuel(self, address: int, value: int) -> None:
+        await self._write("fuel", address, value)
+
+    async def press_code(self) -> None:
+        self.codes += 1
 
     async def close(self) -> None:
         self.close_calls += 1

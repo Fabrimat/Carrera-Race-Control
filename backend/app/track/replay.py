@@ -24,6 +24,7 @@ from app.track.base import (
     TrackConnectionError,
     TrackDisconnected,
     TrackInterface,
+    check_controller_setting,
 )
 
 
@@ -105,6 +106,18 @@ class RecordingTrack:
 
     async def reset_timer(self) -> None:
         await self._inner.reset_timer()
+
+    async def set_speed(self, address: int, value: int) -> None:
+        await self._inner.set_speed(address, value)
+
+    async def set_brake(self, address: int, value: int) -> None:
+        await self._inner.set_brake(address, value)
+
+    async def set_fuel(self, address: int, value: int) -> None:
+        await self._inner.set_fuel(address, value)
+
+    async def press_code(self) -> None:
+        await self._inner.press_code()
 
     async def close(self) -> None:
         try:
@@ -188,6 +201,18 @@ class ReplayTrack:
         return None
 
     async def reset_timer(self) -> None:
+        return None
+
+    async def set_speed(self, address: int, value: int) -> None:
+        check_controller_setting(address, value)
+
+    async def set_brake(self, address: int, value: int) -> None:
+        check_controller_setting(address, value)
+
+    async def set_fuel(self, address: int, value: int) -> None:
+        check_controller_setting(address, value)
+
+    async def press_code(self) -> None:
         return None
 
     async def close(self) -> None:

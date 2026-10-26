@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import itertools
 import random
 import time
@@ -318,3 +319,81 @@ def test_check_lanes_are_reproducible_and_feed_the_engine():
             assert all(s is not None for s in c.last_sectors)
             assert sum(c.last_sectors) == c.last_lap_ms
             assert set(c.segment_estimates) == {"1>2", "2>3", "3>1"}
+
+
+# --------------------------------------------------------------------------- controller settings
+
+
+def laps_of(track: SimulatorTrack, address: int, virtual_ms: float) -> list[float]:
+    stamps = [
+        m.timestamp
+        for _, m in take(track, virtual_ms)
+        if isinstance(m, Timer) and m.address == address and m.sector == 1
+    ]
+    return [ts_diff(b, a) for a, b in zip(stamps, stamps[1:], strict=False)]
+
+
+def make_sim(**kw) -> SimulatorTrack:
+    return SimulatorTrack(num_cars=2, seed=3, double_trigger_rate=0.0, deslot_rate=0.0, **kw)
+
+
+async def test_set_speed_scales_the_lap_time_four_percent_per_step():
+    fast, slow = make_sim(), make_sim()
+    await slow.set_speed(0, 10)  # 5 steps below 15: +20 %
+    a = laps_of(fast, 0, 200_000)
+    b = laps_of(slow, 0, 400_000)
+    assert len(a) >= 5 and len(b) >= 5
+    assert sum(b[:5]) / 5 == pytest.approx(sum(a[:5]) / 5 * 1.2, rel=0.05)
+
+
+async def test_set_speed_beyond_the_car_count_is_a_noop():
+    track = make_sim()
+    await track.set_speed(5, 3)  # only cars 0 and 1 exist
+    await track.set_brake(5, 3)
+    await track.set_fuel(5, 3)
+
+
+async def test_set_fuel_sets_the_tank_level_and_brake_is_ignored():
+    track = make_sim()
+    await track.set_fuel(1, 4)
+    await track.set_brake(1, 0)
+    status = track._core.status()
+    assert status.fuel[1] == 4 and status.fuel[0] == 15
+
+
+async def test_simulator_validates_controller_values():
+    track = make_sim()
+    for call in (track.set_speed, track.set_brake, track.set_fuel):
+        with pytest.raises(ValueError):
+            await call(6, 1)
+        with pytest.raises(ValueError):
+            await call(0, 16)
+
+
+def test_cross_is_a_single_deterministic_crossing():
+    track = make_sim()
+    track.cross(1, at_ms=500)
+    stream = itertools.takewhile(lambda x: x[0] <= 20_000, track.generate(auto_start=False))
+    timers = [(t, m) for t, m in stream if isinstance(m, Timer)]
+    assert [(t, m.address, m.sector) for t, m in timers] == [(500, 1, 1)]  # and no lap cycle
+
+
+async def test_press_code_schedules_a_crossing_of_car_0_about_two_seconds_later():
+    track = SimulatorTrack(num_cars=2, seed=1, time_scale=100.0)
+    await track.connect()
+    await track.press_code()
+    got = []
+    deadline = time.monotonic() + 3
+    while not got and time.monotonic() < deadline:
+        msg = await track.poll()
+        if isinstance(msg, Timer):
+            got.append(msg)
+    assert got and got[0].address == 0 and got[0].sector == 1
+    await asyncio.sleep(0.05)
+    assert not any(isinstance(m, Timer) for m in track._queue)  # no lap cycle started
+    await track.close()
+
+
+def test_cross_rejects_an_address_outside_0_5():
+    with pytest.raises(ValueError):
+        make_sim().cross(6)

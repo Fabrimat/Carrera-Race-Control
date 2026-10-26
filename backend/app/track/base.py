@@ -29,6 +29,24 @@ MODE_LAP_COUNTER = 0x8
 
 MAX_FUEL = 15
 NUM_ADDRESSES = 8
+# Controller settings (speed / brake / fuel): raw CU values 0..15 for the six controllers.
+MAX_CONTROLLER_VALUE = 15
+NUM_CONTROLLERS = 6
+
+
+def check_controller_setting(address: int, value: int) -> None:
+    """Validate a controller write before anything is sent (stricter than carreralib's 0..7).
+
+    Raises ``ValueError`` for an address outside 0..5 or a value outside 0..15.
+    """
+    if isinstance(address, bool) or not isinstance(address, int):
+        raise ValueError(f"controller address must be an integer, got {address!r}")
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"controller value must be an integer, got {value!r}")
+    if not 0 <= address < NUM_CONTROLLERS:
+        raise ValueError(f"controller address must be 0..{NUM_CONTROLLERS - 1}, got {address}")
+    if not 0 <= value <= MAX_CONTROLLER_VALUE:
+        raise ValueError(f"controller value must be 0..{MAX_CONTROLLER_VALUE}, got {value}")
 
 
 def ts_diff(later: int, earlier: int) -> int:
@@ -108,6 +126,18 @@ class TrackInterface(Protocol):
 
     async def reset_timer(self) -> None:
         """Reset the CU timer and drop pending timer messages."""
+
+    async def set_speed(self, address: int, value: int) -> None:
+        """Set the speed value 0..15 of controller 0..5; ``ValueError`` when out of range."""
+
+    async def set_brake(self, address: int, value: int) -> None:
+        """Set the brake value 0..15 of controller 0..5; ``ValueError`` when out of range."""
+
+    async def set_fuel(self, address: int, value: int) -> None:
+        """Set the fuel value 0..15 of controller 0..5; ``ValueError`` when out of range."""
+
+    async def press_code(self) -> None:
+        """Press the CODE button: starts / ends the pairing of a car to a controller."""
 
     async def close(self) -> None:
         """Close the connection. Idempotent."""

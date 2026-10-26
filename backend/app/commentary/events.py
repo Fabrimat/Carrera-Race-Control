@@ -21,6 +21,7 @@ from app.commentary import speech, templates_en, templates_it
 from app.race.models import (
     BestLap,
     CarConfig,
+    CarPaired,
     CarState,
     CommentaryPriority,
     DriverAssigned,
@@ -209,6 +210,10 @@ def candidates(
         fields = {"name": event.driver_name, "car": speech.say_number(event.address + 1, lang)}
         facts = {"driver": event.driver_name, "car": event.address + 1}
         specs.append(("driver_assigned", prio.NORMAL, fields, facts, event.address))
+    elif isinstance(event, CarPaired):
+        fields = {"name": event.name, "controller": speech.say_number(event.address + 1, lang)}
+        facts = {"driver": event.name, "controller": event.address + 1}
+        specs.append(("car_paired", prio.NORMAL, fields, facts, event.address))
     elif isinstance(event, FalseStart):
         specs.extend(_false_start_specs(event, lang, name))
     elif isinstance(event, SessionFinished):

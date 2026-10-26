@@ -29,6 +29,7 @@ from app.track.base import (
     Status,
     Timer,
     TrackDisconnected,
+    check_controller_setting,
 )
 
 LIGHT_STEP_MS = 1000  # one start light per second
@@ -40,6 +41,10 @@ SLOW_LAP_RATE = 0.03  # crash / deslot probability per lap
 DESLOT_RATE = 0.004
 DESLOT_MIN_MS = 10_000
 DESLOT_MAX_MS = 25_000
+# Controller settings (an assumption, the real CU's effect is to be verified on the track):
+# speed 15 leaves the pace unchanged and every step below adds this much to the lap time.
+SPEED_STEP_SLOWDOWN = 0.04
+CODE_CROSSING_DELAY_MS = 2000  # press_code(): car 0 "answers" this long after (real time)
 # Events that are shifted when a car is held (everything it would do on the track).
 _CAR_TRACK_EVENTS = frozenset({"cross", "double", "sensor2", "sensor3"})
 
@@ -49,6 +54,8 @@ class _SimCar:
         self.address = address
         self.base_lap_ms = base_lap_ms
         self.fuel = MAX_FUEL
+        self.speed = MAX_FUEL  # controller speed setting, 15 = unchanged pace
+        self.fuel_setting: int | None = None  # controller fuel setting, kept over a reset
         self.in_pit = False
         self.crossings = 0
 
@@ -119,6 +126,23 @@ class SimulatedCU:
         return self._heap[0][0] if self._heap else None
 
     # ---- commands
+
+    def set_speed(self, address: int, value: int) -> None:
+        """Scale a car's pace from its next lap on (no-op for an address without a car)."""
+        if address < len(self.cars):
+            self.cars[address].speed = value
+
+    def set_fuel(self, address: int, value: int) -> None:
+        """Set the car's tank level at once (an assumption; no-op without a car)."""
+        if address < len(self.cars):
+            self.cars[address].fuel = self.cars[address].fuel_setting = value
+
+    def schedule_crossing(self, t: float, address: int) -> None:
+        """A single start/finish crossing of ``address`` at virtual time ``t``.
+
+        Unlike a race crossing it starts no lap cycle: the car does not keep circulating.
+        """
+        self._push(t, "free_cross", address)
 
     def start(self, t: float) -> None:
         """Like the real CU: the first press arms (light 1 held), the second starts the
@@ -198,7 +222,7 @@ class SimulatedCU:
         self._heap.clear()
         self._frozen.clear()
         for car in self.cars:
-            car.fuel = MAX_FUEL
+            car.fuel = MAX_FUEL if car.fuel_setting is None else car.fuel_setting
             car.in_pit = False
             car.crossings = 0
 
@@ -206,6 +230,7 @@ class SimulatedCU:
 
     def _lap_ms(self, car: _SimCar) -> float:
         lap = car.base_lap_ms * min(1.1, max(0.9, self.rng.gauss(1.0, 0.015)))
+        lap *= 1 + SPEED_STEP_SLOWDOWN * (MAX_FUEL - car.speed)
         if self.rng.random() < SLOW_LAP_RATE:
             lap += self.rng.uniform(4000, 9000)
         if self.fuel and car.fuel == 0:
@@ -261,6 +286,8 @@ class SimulatedCU:
                 self._on_cross(t, self.cars[arg])
             elif kind in ("sensor2", "sensor3"):
                 out.append((t, Timer(address=arg, timestamp=self.cu_ts(t), sector=int(kind[-1]))))
+            elif kind == "free_cross":
+                out.append((t, Timer(address=arg, timestamp=self.cu_ts(t), sector=1)))
             elif kind == "double":
                 out.append((t, Timer(address=arg, timestamp=self.cu_ts(t), sector=1)))
             elif kind == "pit_end":
@@ -387,6 +414,38 @@ class SimulatorTrack:
         now = self._now()
         self._core.reset(now)
         self._queue.clear()
+
+    async def set_speed(self, address: int, value: int) -> None:
+        """Scales the car's pace from its next lap (15 = unchanged, -4 % per step below)."""
+        check_controller_setting(address, value)
+        self._core.set_speed(address, value)
+
+    async def set_brake(self, address: int, value: int) -> None:
+        """Accepted and ignored (the simulated cars do not brake)."""
+        check_controller_setting(address, value)
+
+    async def set_fuel(self, address: int, value: int) -> None:
+        """Sets the car's tank level at once (an assumption, see SPEED_STEP_SLOWDOWN)."""
+        check_controller_setting(address, value)
+        self._core.set_fuel(address, value)
+
+    async def press_code(self) -> None:
+        """Pairing: car 0 crosses the line about 2 s later (the flow works while idle)."""
+        now = self._now()
+        self._fill(now)
+        self._core.schedule_crossing(now + CODE_CROSSING_DELAY_MS * self.time_scale, 0)
+
+    def cross(self, address: int, at_ms: float | None = None) -> None:
+        """Deterministic test hook: one start/finish crossing of ``address`` (0..5) now.
+
+        ``at_ms`` is the virtual time to apply it at (for :meth:`generate`).
+        """
+        if not 0 <= address < 6:
+            raise ValueError("address must be between 0 and 5")
+        now = self._now() if at_ms is None else at_ms
+        if at_ms is None:
+            self._fill(now)
+        self._core.schedule_crossing(now, address)
 
     async def close(self) -> None:
         self._closed = True
