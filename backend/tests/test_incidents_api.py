@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
 from tests.test_api import make_client, total_laps, wait_state  # noqa: F401 - pytest fixture
+from tests.test_service import make_config
 
 
 def test_marshal_endpoints_need_a_running_race(make_client: Callable[..., TestClient]) -> None:  # noqa: F811
@@ -17,8 +19,9 @@ def test_marshal_endpoints_need_a_running_race(make_client: Callable[..., TestCl
         assert r.json()["code"] == "race_not_running"
 
 
-def test_report_and_clear_a_car(make_client: Callable[..., TestClient]) -> None:  # noqa: F811
-    client = make_client()
+def test_report_and_clear_a_car(make_client: Callable[..., TestClient], tmp_path: Path) -> None:  # noqa: F811
+    # a slower simulator: the car must not cross the line between the calls
+    client = make_client(config=make_config(tmp_path, sim_time_scale=5.0))
     client.post("/api/connect", json={"mode": "simulator"})
     assert client.post("/api/race/start").status_code == 200
     wait_state(client, lambda s: total_laps(s) >= 2)

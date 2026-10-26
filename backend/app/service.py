@@ -1036,7 +1036,7 @@ class RaceController:
 
     async def reset_race(self) -> RaceState:
         await self._cancel_watchdog()
-        await self._recall_pace_car()
+        await self._recall_pace_car(recheck=False)  # the race is being reset: no redeploy
         self.engine.reset()
         self.engine.race_id = None
         self._sequence_seen = False
@@ -1141,7 +1141,7 @@ class RaceController:
             return None
         return self._track
 
-    async def _deploy_pace_car(self) -> None:
+    async def _deploy_pace_car(self, recheck: bool = True) -> None:
         track = self._connected_track()
         if track is None:
             log.warning("auto pace car: not connected, the pace car was not deployed")
@@ -1155,8 +1155,15 @@ class RaceController:
             return
         self.engine.set_paused(True)
         log.info("auto pace car deployed for an incident")
+        # The state may have moved while the toggle was awaited (the car crossed, the race
+        # ended): bring the pace car back at once instead of leaving the race paused.
+        # ``recheck`` bounds this to one re-evaluation (no ping-pong).
+        if recheck and (
+            self.engine.phase is not RacePhase.PAUSED or not self.engine.has_open_incident()
+        ):
+            await self._recall_pace_car(recheck=False)
 
-    async def _recall_pace_car(self) -> None:
+    async def _recall_pace_car(self, recheck: bool = True) -> None:
         """Bring our own pace car back (no-op when it is not ours)."""
         if not self._pace_owned:
             return
@@ -1173,6 +1180,14 @@ class RaceController:
         self.engine.set_paused(False)
         log.info("auto pace car recalled")
         self._mark_dirty()
+        # An incident may have opened during the await (the phase was still PAUSED then).
+        if (
+            recheck
+            and self.engine.config.incidents.auto_pace_car
+            and self.engine.phase is RacePhase.RUNNING
+            and self.engine.has_open_incident()
+        ):
+            await self._deploy_pace_car(recheck=False)
 
     # ------------------------------------------------------------------ settings
 
