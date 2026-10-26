@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from 'react'
 import { CarsSection } from '../components/CarsSection'
+import { ShortcutsSection } from '../components/ShortcutsSection'
 import { useT } from '../i18n/useT'
 import { guarded } from '../lib/errors'
 import { saveSettings } from '../lib/settingsSave'
@@ -190,6 +191,8 @@ export function SettingsPage() {
           </Field>
         </div>
       </section>
+
+      <ShortcutsSection />
 
       <section className="rounded-lg border border-line bg-panel p-4">
         <h3 className="mb-3 text-sm font-bold uppercase tracking-widest text-dim">{t('settings.keys')}</h3>

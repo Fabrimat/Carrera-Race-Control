@@ -1,8 +1,9 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useT } from '../i18n/useT'
 import { api } from '../lib/api'
 import { audioPlayer } from '../lib/audio'
 import { connectionErrorMessage, guarded } from '../lib/errors'
+import { SCAN_EVENT } from '../lib/shortcutActions'
 import { useStore } from '../lib/store'
 import type { ScanDevice, TrackMode } from '../lib/types'
 
@@ -43,6 +44,18 @@ export function ConnectionBar({ compact = false }: { compact?: boolean }) {
       else if (!effAddress) setAddress(res.devices[0].address)
     }
   }
+  // The scan shortcut fills this bar's device list (only when a scan is possible here).
+  const canScan = needsAddress && !connected && !scanning
+  useEffect(() => {
+    const on = (e: Event) => {
+      if (!canScan) return
+      ;(e as CustomEvent<{ handled: boolean }>).detail.handled = true
+      void scan()
+    }
+    window.addEventListener(SCAN_EVENT, on)
+    return () => window.removeEventListener(SCAN_EVENT, on)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `scan` is recreated every render
+  }, [canScan, effMode, effAddress])
   const connect = async () => {
     setBusy(true)
     void audioPlayer.unlock()

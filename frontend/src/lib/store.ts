@@ -6,6 +6,7 @@ import type {
   Driver,
   EventState,
   Language,
+  RaceConfig,
   RaceEvent,
   RaceState,
   SettingsResponse,
@@ -81,6 +82,12 @@ export interface AppState extends LiveState {
   settings: SettingsResponse | null
   language: Language
   toasts: Toast[]
+  /** Mode / laps / duration edited before the start (dashboard controls and shortcuts). */
+  raceOverride: Partial<RaceConfig>
+  setRaceOverride: (patch: Partial<RaceConfig>) => void
+  /** The `?` shortcut help overlay. */
+  helpOpen: boolean
+  setHelpOpen: (open: boolean) => void
   drivers: Driver[]
   setDrivers: (d: Driver[]) => void
   setEventState: (e: EventState) => void
@@ -173,6 +180,10 @@ export const useStore = create<AppState>((set, get) => ({
   settings: null,
   language: detectLanguage(),
   toasts: [],
+  raceOverride: {},
+  setRaceOverride: (patch) => set((s) => ({ raceOverride: { ...s.raceOverride, ...patch } })),
+  helpOpen: false,
+  setHelpOpen: (helpOpen) => set({ helpOpen }),
   setWs: (ws) => set({ ws }),
   applyMessage: (m) => set((s) => reduceMessage(s, m)),
   setSettings: (settings) => set({ settings, language: settings.ui_language }),
