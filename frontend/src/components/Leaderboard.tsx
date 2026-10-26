@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef, useState } from 'react'
 import { useFormat, useT } from '../i18n/useT'
+import { api } from '../lib/api'
 import { guarded } from '../lib/errors'
 import { MAX_CAR_NAME, renameCar } from '../lib/settingsSave'
 import { useStore } from '../lib/store'
@@ -19,6 +20,8 @@ interface Props {
   bestSectors?: (number | null)[]
   /** Allow renaming cars inline (click, Enter or F2). Off in TV mode. */
   editable?: boolean
+  /** Show the marshal "report off" action (race running or paused). */
+  reportable?: boolean
 }
 
 export function sortCars(cars: CarState[]): CarState[] {
@@ -172,6 +175,7 @@ export function Leaderboard({
   large = false,
   dense = false,
   editable = false,
+  reportable = false,
   numSectors = 1,
   bestSectors = [],
 }: Props) {
@@ -248,6 +252,36 @@ export function Leaderboard({
                   >
                     {t('leaderboard.pit')}
                   </span>
+                )}
+                {c.incident && (
+                  <span
+                    data-testid="incident-badge"
+                    className="rounded bg-gold px-2 py-0.5 text-sm font-bold text-black"
+                    title={t('incident.marker', { name: c.driver_name || c.name })}
+                  >
+                    {t('incident.badge')}
+                  </span>
+                )}
+                {(c.incidents ?? 0) > 0 && (
+                  <span
+                    data-testid="incident-count"
+                    className="rounded border border-gold px-1.5 py-0.5 text-sm font-bold text-gold"
+                    title={t('incident.count', { count: c.incidents })}
+                  >
+                    ⚑ {c.incidents}
+                  </span>
+                )}
+                {reportable && !c.incident && !c.finished && (
+                  <button
+                    type="button"
+                    data-testid="report-off"
+                    title={t('incident.report_title')}
+                    aria-label={t('incident.report_aria', { name: c.driver_name || c.name })}
+                    className="rounded border border-line px-2 py-0.5 text-sm font-bold uppercase text-dim hover:border-gold hover:text-gold focus-visible:border-gold focus-visible:text-gold"
+                    onClick={() => void guarded(() => api.reportIncident(c.address))}
+                  >
+                    {t('incident.report')}
+                  </button>
                 )}
                 {isRecord && (
                   <span

@@ -75,6 +75,9 @@ export const api = {
   stopRace: () => request<RaceState>('POST', '/api/race/stop'),
   resetRace: () => request<RaceState>('POST', '/api/race/reset'),
   paceCar: () => request<RaceState>('POST', '/api/race/pace-car'),
+  /** Marshal: report a car off the track / back on track (docs/PROTOCOL.md "Incidents"). */
+  reportIncident: (address: number) => request<RaceState>('POST', `/api/race/incidents/${address}`),
+  clearIncident: (address: number) => request<RaceState>('POST', `/api/race/incidents/${address}/clear`),
   getSettings: () => request<SettingsResponse>('GET', '/api/settings'),
   putSettings: (s: Settings) => request<SettingsResponse>('PUT', '/api/settings', s),
   races: () => request<{ races: RaceSummary[] }>('GET', '/api/races'),

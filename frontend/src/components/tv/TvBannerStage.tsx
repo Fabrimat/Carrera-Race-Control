@@ -12,6 +12,8 @@ const GLYPH: Partial<Record<BannerKind, string>> = {
   pit_missed: 'PIT',
   control: 'RC',
   false_start: 'FS',
+  incident: '⚑',
+  incident_cleared: 'GO',
 }
 
 function LowerThird({ banner, exiting }: BannerView) {

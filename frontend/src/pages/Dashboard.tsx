@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { CommentaryFeed } from '../components/CommentaryFeed'
 import { ConnectionBar } from '../components/ConnectionBar'
 import { EventLog } from '../components/EventLog'
@@ -6,6 +6,7 @@ import { Modal } from '../components/Modal'
 import { WhoDriving } from '../components/WhoDriving'
 import { ChartPanel } from '../components/ChartPanel'
 import { Leaderboard } from '../components/Leaderboard'
+import { MarshalPanel } from '../components/MarshalPanel'
 import { TrackMap } from '../components/TrackMap'
 import { RaceClock } from '../components/RaceClock'
 import { TrackRecordPanel } from '../components/TrackRecordPanel'
@@ -13,6 +14,7 @@ import { RaceControls } from '../components/RaceControls'
 import { SessionBar } from '../components/event/SessionBar'
 import { StartLights } from '../components/StartLights'
 import { useT } from '../i18n/useT'
+import { incidentPlace, incidentSector } from '../lib/incidents'
 import { openTvWindow } from '../lib/desktop'
 import { useStore } from '../lib/store'
 import { useFuelToasts } from '../lib/useFuelToasts'
@@ -33,11 +35,29 @@ export function Dashboard() {
   useFuelToasts()
   const starting = race.phase === 'starting'
   const lights = race.phase === 'starting' || race.start_light !== 0
+  const reportable = race.phase === 'running' || race.phase === 'paused'
+
+  // Toast on a new incident (events already in the store at mount are not replayed).
+  useEffect(() => {
+    const seen = new WeakSet<object>(useStore.getState().events)
+    return useStore.subscribe((s) => {
+      for (const e of s.events) {
+        if (seen.has(e)) continue
+        seen.add(e)
+        if (e.type !== 'incident_started') continue
+        const car = s.race.cars.find((c) => c.address === e.address)
+        const name = car ? car.driver_name || car.name : `#${e.address + 1}`
+        const text = t('event.incident_started', { name })
+        const place = incidentSector(e, s.race.num_sectors) !== null ? incidentPlace(e, s.race.num_sectors, t) : null
+        s.pushToast(place ? t('incident.toast_at', { text, place }) : text, 'info')
+      }
+    })
+  }, [t])
 
   return (
     <div
       data-testid="dashboard"
-      className="flex flex-col gap-3 p-3 min-[1200px]:grid min-[1200px]:h-full min-[1200px]:grid-rows-[auto_minmax(0,1.45fr)_minmax(0,1fr)] min-[1200px]:overflow-hidden min-[1200px]:gap-2"
+      className="relative flex flex-col gap-3 p-3 min-[1200px]:grid min-[1200px]:h-full min-[1200px]:grid-rows-[auto_minmax(0,1.45fr)_minmax(0,1fr)] min-[1200px]:overflow-hidden min-[1200px]:gap-2"
     >
       {/* band 1: event session bar (only when relevant), then connection, clock and lights, race controls */}
       <div className="flex min-w-0 flex-col gap-2">
@@ -87,6 +107,7 @@ export function Dashboard() {
             trackRecord={race.track_record}
             fuelMode={race.fuel_mode}
             editable
+            reportable={reportable}
             dense
             numSectors={race.num_sectors}
             bestSectors={race.best_sectors}
@@ -108,6 +129,8 @@ export function Dashboard() {
           </div>
         </div>
       </div>
+
+      <MarshalPanel />
 
       {who && (
         <Modal label={t('who.title')} onClose={() => setWho(false)}>

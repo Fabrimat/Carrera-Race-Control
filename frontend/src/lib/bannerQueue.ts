@@ -16,6 +16,8 @@ export type BannerKind =
   | 'final_lap'
   | 'chequered'
   | 'false_start'
+  | 'incident'
+  | 'incident_cleared'
   | 'session_result'
 
 export interface Banner {
@@ -70,6 +72,8 @@ const PRIORITY: Record<BannerKind, number> = {
   final_lap: 4,
   track_record: 5,
   false_start: 6,
+  incident: 5,
+  incident_cleared: 2,
   chequered: CLEARING_PRIORITY,
   session_result: CLEARING_PRIORITY,
 }
