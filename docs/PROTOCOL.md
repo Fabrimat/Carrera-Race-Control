@@ -465,62 +465,86 @@ end of the roadmap.
 
 ### Controller settings (speed, brake, fuel)
 
-The CU keeps a speed, brake and fuel value (raw 0..15) per controller, written with
-carreralib `setspeed` / `setbrake` / `setfuel` (`setword` 0 / 1 / 2, repeat 2). The CU
-does not report them back. Their exact effect on the real CU (direction of the scale, tank
-level vs consumption for fuel) is **to be verified on the track**; the UI shows the raw
-0..15 value with that note.
+The CU keeps a speed, brake and fuel value (raw 0..15) per controller. The adapter calls
+carreralib's `cu.setspeed(address, value)`, `cu.setbrake(...)`, `cu.setfuel(...)` and
+`cu.press(ControlUnit.CODE_BUTTON_ID)` through `_command`, like `start()`. The CU does not
+report the values back, and the reply format of these commands on the real CU is
+unverified. Their effect (direction of the scale, tank level vs consumption for fuel) is
+**to be verified on the track**; the UI shows the raw 0..15 value with that note.
 
 - `TrackInterface` gains `set_speed(address, value)`, `set_brake(address, value)`,
-  `set_fuel(address, value)` and `press_code()` (CU CODE button, `CODE_BUTTON_ID`). They
-  go through the same command queue as `start()`; values outside 0..15 or addresses
-  outside 0..5 raise `ValueError` before anything is sent.
+  `set_fuel(address, value)` and `press_code()`. Values outside 0..15 or addresses outside
+  0..5 raise `ValueError` before anything is sent (stricter than carreralib's 0..7, on
+  purpose). The simulator accepts any address 0..5, also beyond its car count (no-op).
 - **Effective settings** per address: start from `CarConfig.controller`; if a driver is
   assigned to that address (event mode) and `Driver.controller` is set, each of its
-  non-null fields replaces the car's. Null fields are never written.
-- **When the controller writes**: on connect (after the first Status), after
-  `PUT /api/settings`, after a driver (un)assignment or a driver profile change, and on
-  `POST /api/controllers/apply`. Never while the race is STARTING, RUNNING or PAUSED:
-  changes made then stay `pending` and are written when the race finishes or is reset.
-  Only fields that differ from the last successful write (`applied`) are sent, except
-  on connect, when everything non-null is sent (the CU may have been power-cycled). A
-  failed write is logged and leaves the address `pending`; it is never raised to the
-  request that triggered it.
-- **Simulator**: speed scales the car's pace (15 = unchanged, each step below adds 4 %
-  to its lap time), brake is accepted and ignored, fuel sets the car's tank level
-  immediately (an assumption, documented in `simulator.py`).
+  non-null fields replaces the car's. `ControllerStatus.driver_id` = the assigned driver,
+  even if that driver has no profile.
+- **Unset semantics**: a null effective field is never sent; `applied` keeps its last value
+  for it and it does not make the address pending. `pending` = a non-null effective field
+  differs from `applied` (or `applied` is null and any effective field is non-null), or a
+  write for that address is in flight. `GET /api/controllers` works while disconnected.
+- **One writer**: all writes go through one serialized background task (asyncio lock),
+  one CU command in flight at a time. A batch aborts on its first failure: the rest stays
+  pending, logged once. Triggers never await the batch (they schedule it; a running batch
+  re-checks pending when it ends, so triggers coalesce).
+- **Triggers**: the first Status after every (re)connect (`applied` is reset to null on
+  every disconnect / link loss, the CU may have been power-cycled: then every non-null
+  field is sent); `PUT /api/settings`; driver assignment changes (manual, voice, crossing,
+  `delete_driver`, import); `update_driver` (which must copy `controller`, and
+  `PUT /api/drivers/{id}` passes it through; `POST /api/drivers` does not take it); and
+  `POST /api/controllers/apply`. Otherwise only the fields that differ from `applied` are
+  sent.
+- **Never during a race**: while the race is STARTING, RUNNING or PAUSED nothing is
+  written; changes stay pending and are written when the race finishes or is reset.
+- **Simulator**: speed scales the car's pace (15 = unchanged, each step below adds 4 % to
+  its lap time), brake is accepted and ignored, fuel sets the car's tank level immediately
+  (an assumption, documented in `simulator.py`).
 
 | Method | Path | Body | Response |
 |---|---|---|---|
 | GET | `/api/controllers` | – | `{"controllers": ControllerStatus[]}` addresses 0..5 |
-| POST | `/api/controllers/apply` | – | same, after writing every pending address (409 `not_connected` without a track; 409 `busy` during a race) |
-
-Driver profiles are edited through the existing `PUT /api/drivers/{id}` (field
-`controller`); car settings through `PUT /api/settings` (`cars[].controller`).
+| POST | `/api/controllers/apply` | – | same, after force-writing every non-null effective field of every address (409 `not_connected` without a track; 409 `busy` during a race; joins a batch already in flight) |
 
 ### Pairing (car ↔ controller)
 
 Carrera coding: press CODE on the CU, put the car on the track and press the lane-change
-button on the controller it should answer to. The app drives that from a wizard:
+button on the controller it should answer to. Whether the CU reports a crossing while in
+CODE mode, and under which id, is unverified; the wizard therefore also has a manual
+confirm.
 
 | Method | Path | Body | Response |
 |---|---|---|---|
-| POST | `/api/pairing` | `{"target_address": 0..5, "car": CarConfig}` | `PairingState` (phase `waiting`); presses CODE once |
+| POST | `/api/pairing` | `{"target_address": 0..5, "car": CarConfig, "from_address": 0..5 \| null}` | `PairingState` (phase `waiting`); presses CODE once |
+| POST | `/api/pairing/confirm` | – | `PairingState` (phase `paired`): the user saw the CU LED stop blinking |
 | DELETE | `/api/pairing` | – | `PairingState` (phase `cancelled`) or 404 `not_found` if none |
 
 - Allowed only with a connected track (409 `not_connected`) and while the race is IDLE or
-  FINISHED (409 `busy`); a second POST while `waiting` replaces the first (CODE is pressed
-  again). `car.address` is ignored and set to `target_address`.
-- While `waiting` (60 s, `expires_at`), the first sensor-1 crossing of any address
-  completes it: `detected_address` is set, phase `paired`, event `car_paired` with
-  `matches_target = detected == target`, and the `car` profile (name, colour, nickname,
-  logo, controller settings) is stored in settings at the **detected** address (replacing
-  that car), then its controller settings are written. That crossing is not a lap (no
-  race is running). After 60 s: phase `timeout`. A failing CODE press: phase `failed`.
-- `RaceState.pairing` carries the state while `waiting` and for 10 s after it ended (so the
-  UI can show the result), then null. Not persisted.
-- Simulator: `press_code()` is accepted; the next crossing pairs (any car), so the flow is
-  testable end to end.
+  FINISHED (409 `busy`). A second POST while `waiting` replaces target, car and
+  `from_address` **without** pressing CODE again (it would likely toggle code mode off).
+  DELETE and timeout do not touch the CU (the UI says: press CODE on the CU if its LED
+  still blinks). `car.address` is ignored and set to `target_address`.
+- While `waiting` (60 s, `expires_at`): a sector-1 crossing of `target_address` completes
+  it (`paired`, `detected_address = target`). A crossing of another address only sets
+  `detected_address` as a hint (phase stays `waiting`; the UI shows "the line saw
+  controller N" and offers to use that controller instead, by POSTing again with that
+  target). `POST /api/pairing/confirm` completes it manually.
+- On `paired`: event `car_paired` (`matches_target = detected_address in (null, target)`);
+  the `car` profile (name, colour, nickname, logo, controller settings) is stored in
+  settings at **`target_address`** (never elsewhere); if `from_address` is given and
+  differs, that slot is reset to the default car of its address (re-coding an existing
+  car); then the target's controller settings are written.
+- While `waiting`, the pairing handler runs before event mode's "assign on next crossing"
+  for the same Timer, and that Timer is not used for the assignment (the arming stays and
+  expires on its own). The crossing does not disturb the engine (no race running).
+- If the race leaves IDLE/FINISHED while `waiting` (e.g. START pressed on the CU): phase
+  `cancelled`, error "race started", no CU interaction. A failing CODE press: `failed`.
+- `RaceState.pairing` is filled by the controller (like the driver names) while `waiting`
+  and for 10 s after it ended, then null; the tick loop handles expiry and the linger and
+  marks the state dirty. Not persisted.
+- Simulator: `press_code()` schedules one sector-1 crossing of car 0 about 2 s later (so the
+  flow works end to end while idle), and `SimulatorTrack.cross(address, at_ms=None)` is a
+  deterministic hook for tests.
 
 ### Garage
 
@@ -528,8 +552,12 @@ button on the controller it should answer to. The app drives that from a wizard:
 |---|---|---|---|
 | GET | `/api/garage` | – | `{"cars": GarageCar[]}` one per configured car, by address |
 
-Stats come from the race history (store): races the address took part in (it has at least
-one lap), total laps, all-time best valid lap and its layout.
+Stats come from the race history, per **address** (the history has no car identity:
+pairing a new car to an address inherits that address's history): races the address took
+part in (at least one lap), total laps, all-time best valid lap and its layout. Store
+schema v6 adds `races.layout TEXT` and `races.track_mode TEXT` (filled for new races; old
+rows null). Simulator races are excluded from the garage stats (as from track records);
+old rows with a null mode count.
 
 ### Webcam tracking (prototype)
 

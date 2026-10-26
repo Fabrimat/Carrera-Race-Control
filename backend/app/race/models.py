@@ -239,7 +239,8 @@ class PairingState(BaseModel):
     car: CarConfig  # the car profile to store at that address once paired
     started_at: datetime
     expires_at: datetime
-    detected_address: int | None = None  # address of the first crossing seen
+    from_address: int | None = None  # re-coding: this slot is reset once paired
+    detected_address: int | None = None  # last address seen crossing the line (a hint)
     error: str | None = None  # English, for logs (failed)
 
 

@@ -53,6 +53,7 @@ export interface PairingState {
   car: CarConfig
   started_at: string
   expires_at: string
+  from_address: number | null
   detected_address: number | null
   error: string | null
 }
