@@ -327,12 +327,14 @@ share a logo). The engine copies it to `CarState.logo_id`. Files live in
   other id in a path is `logo_not_found` (no path traversal). A row whose file is missing
   on disk is also `logo_not_found` for the image.
 - Images: decoded ≤ 512 KB (`image_too_large`, 413); PNG / JPEG / WebP by magic bytes; or
-  SVG, checked on the parsed tree (stdlib `xml.etree`, no new dependency): reject any
+  SVG, which must be UTF-8 (optional BOM; NUL bytes or another prolog `encoding` are
+  `invalid_image`), checked on the parsed tree (stdlib `xml.etree`, no new dependency; the
+  parser also refuses any doctype): reject any
   `<!DOCTYPE` / `<!ENTITY` before parsing; root element must be `svg`; reject elements whose
   local name is `script` or `foreignObject`; attributes whose local name starts with `on`;
   any attribute value whose stripped, lower-cased text starts with `javascript:`;
   `href` / `xlink:href` not starting with `#` or `data:image/`; `<style>` text containing
-  `@import` or `url(` with a non-`#`/non-`data:` target. Anything else: `invalid_image`
+  `@import`, a backslash (CSS escape) or `url(` with a non-`#`/non-`data:` target. Anything else: `invalid_image`
   (422).
 - Every image response carries `X-Content-Type-Options: nosniff`; SVG responses (only
   them) also `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline';

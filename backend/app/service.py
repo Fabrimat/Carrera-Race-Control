@@ -37,7 +37,7 @@ import re
 import time
 import unicodedata
 from collections import deque
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Container, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
@@ -57,6 +57,8 @@ from app.commentary.stt import (
 )
 from app.commentary.tts import DEFAULT_MODEL_ID, BudgetTracker, ElevenLabsTTS, TTSClient
 from app.config import AppConfig, TrackMode
+from app.logos import MEDIA_TYPES, LogoStore
+from app.race.bundle import null_unknown_logos
 from app.race.engine import RaceEngine
 from app.race.models import (
     CarConfig,
@@ -70,6 +72,7 @@ from app.race.models import (
     IncidentStarted,
     LapCompleted,
     LayoutDraft,
+    Logo,
     RaceConfig,
     RaceEvent,
     RaceFinished,
@@ -156,6 +159,7 @@ ErrorCode = Literal[
     "record_not_found",
     "audio_not_found",
     "layout_not_found",
+    "logo_not_found",
     "llm_unavailable",
     "photo_unrecognised",
     "photo_busy",
@@ -323,6 +327,7 @@ class RaceController:
 
         # Event mode: drivers, assignments and "assign on next crossing".
         self.avatars = AvatarStore(config.avatars_dir)
+        self.logo_files = LogoStore(config.logos_dir)
         self._transcriber = transcriber
         self._wall_clock: Callable[[], datetime] = utcnow
         self._drivers_cache: dict[str, Driver] | None = None
@@ -1190,6 +1195,59 @@ class RaceController:
         self._mark_dirty()
         return self.settings
 
+    # ------------------------------------------------------------------ logos
+    # Brand logo library (app/logos.py); cars point at one with CarConfig.logo_id.
+
+    def list_logos(self) -> list[Logo]:
+        return self.store.list_logos()
+
+    def get_logo(self, logo_id: str) -> Logo:
+        logo = self.store.get_logo(logo_id)
+        if logo is None:
+            raise ControllerError(404, f"Logo {logo_id!r} not found", "logo_not_found")
+        return logo
+
+    def _store_logo_file(self, logo_id: str, data: bytes, ext: str) -> None:
+        try:
+            self.logo_files.save(logo_id, data, ext)
+        except OSError as exc:
+            log.exception("could not store the logo %s", logo_id)
+            raise ControllerError(500, "Could not store the logo", "unknown") from exc
+
+    def create_logo(self, name: str, data: bytes, ext: str) -> Logo:
+        taken = {logo.id for logo in self.store.list_logos()}
+        logo = Logo(
+            id=self._unique_slug(name, taken, "logo"), name=name, media_type=MEDIA_TYPES[ext]
+        )
+        self._store_logo_file(logo.id, data, ext)
+        saved = self.store.save_logo(logo)
+        self._mark_dirty()
+        return saved
+
+    def update_logo(self, logo_id: str, name: str, image: tuple[bytes, str] | None) -> Logo:
+        """Rename, and replace the image when ``image`` (bytes, extension) is given."""
+        logo = self.get_logo(logo_id)
+        update: dict[str, Any] = {"name": name, "updated_at": utcnow()}
+        if image is not None:
+            self._store_logo_file(logo_id, image[0], image[1])
+            update["media_type"] = MEDIA_TYPES[image[1]]
+        saved = self.store.save_logo(logo.model_copy(update=update))
+        self._mark_dirty()
+        return saved
+
+    def delete_logo(self, logo_id: str) -> list[Logo]:
+        self.get_logo(logo_id)
+        self.logo_files.delete(logo_id)
+        self.store.delete_logo(logo_id)
+        if any(car.logo_id == logo_id for car in self.settings.cars):
+            cars = [
+                car.model_copy(update={"logo_id": None}) if car.logo_id == logo_id else car
+                for car in self.settings.cars
+            ]
+            self.update_settings(self.settings.model_copy(update={"cars": cars}))
+        self._mark_dirty()
+        return self.store.list_logos()
+
     # ------------------------------------------------------------------ track layouts
 
     def _refresh_layout(self) -> None:
@@ -1283,7 +1341,9 @@ class RaceController:
         """Bring the in-memory caches in line with imported data. Never touches the track."""
         self._drivers_cache = None
         if settings is not None:
-            self.update_settings(settings)  # also stores the settings and refreshes the UI
+            known = {logo.id for logo in self.store.list_logos()}
+            # also stores the settings and refreshes the UI
+            self.update_settings(null_unknown_logos(settings, known))
         self._refresh_layout()
         self._record_layout = self.settings.track.layout
         self.track_record = self._load_record(self._record_layout)
@@ -1376,16 +1436,19 @@ class RaceController:
             raise ControllerError(404, f"Driver {driver_id!r} not found", "not_found")
         return driver
 
-    def _unique_driver_id(self, name: str) -> str:
+    @staticmethod
+    def _unique_slug(name: str, taken: Container[str], fallback: str) -> str:
         folded = unicodedata.normalize("NFKD", name.casefold())
         ascii_name = folded.encode("ascii", "ignore").decode()
-        slug = re.sub(r"[^a-z0-9]+", "-", ascii_name).strip("-")[:32].strip("-") or "driver"
-        taken = self._driver_map()
+        slug = re.sub(r"[^a-z0-9]+", "-", ascii_name).strip("-")[:32].strip("-") or fallback
         candidate, n = slug, 1
         while candidate in taken:
             n += 1
             candidate = f"{slug}-{n}"
         return candidate
+
+    def _unique_driver_id(self, name: str) -> str:
+        return self._unique_slug(name, self._driver_map(), "driver")
 
     def _save_driver(self, driver: Driver) -> Driver:
         saved = self.store.save_driver(driver)

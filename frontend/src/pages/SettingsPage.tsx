@@ -2,6 +2,7 @@ import { useState, type ReactNode } from 'react'
 import { CarsSection } from '../components/CarsSection'
 import { IncidentRulesFields, PitRulesFields } from '../components/RulesEditor'
 import { ShortcutsSection } from '../components/ShortcutsSection'
+import { LogosSection } from '../components/LogosSection'
 import { useT } from '../i18n/useT'
 import { guarded } from '../lib/errors'
 import { saveSettings } from '../lib/settingsSave'
@@ -106,6 +107,8 @@ export function SettingsPage() {
       <h2 className="text-2xl font-black uppercase tracking-widest">{t('settings.title')}</h2>
 
       <CarsSection cars={loaded.cars} />
+
+      <LogosSection />
 
       <section className="rounded-lg border border-line bg-panel p-4">
         <h3 className="mb-3 text-sm font-bold uppercase tracking-widest text-dim">{t('settings.track')}</h3>

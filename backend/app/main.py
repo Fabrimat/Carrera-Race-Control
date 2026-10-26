@@ -23,6 +23,7 @@ from app.api.routes import router
 from app.api.routes_drivers import router as drivers_router
 from app.api.routes_event import router as event_router
 from app.api.routes_io import router as io_router
+from app.api.routes_logos import router as logos_router
 from app.api.security import BodyLimitMiddleware, CSRFMiddleware, normalise_origins
 from app.config import REPO_ROOT, AppConfig
 from app.race.store import RaceStore
@@ -94,6 +95,7 @@ def create_app(
     app.include_router(drivers_router)
     app.include_router(event_router)
     app.include_router(io_router)
+    app.include_router(logos_router)
     if frontend_dist is not None and (frontend_dist / "index.html").is_file():
         # Registered last: API and WebSocket routes take precedence over the static mount.
         app.mount("/", StaticFiles(directory=frontend_dist, html=True), name="frontend")

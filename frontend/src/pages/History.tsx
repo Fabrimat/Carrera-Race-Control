@@ -3,6 +3,7 @@ import { useFormat, useT } from '../i18n/useT'
 import { api } from '../lib/api'
 import { apiErrorMessage, guarded } from '../lib/errors'
 import { formatDateTime } from '../lib/format'
+import { CarLogo } from '../components/CarLogo'
 import { LazyLapChart } from '../components/LazyLapChart'
 import { seriesFromLaps } from '../lib/series'
 import { useStore } from '../lib/store'
@@ -211,6 +212,7 @@ export function HistoryDetail({ id }: { id: number }) {
                   <td className="num p-2">{c.position ?? '–'}</td>
                   <td className="p-2">
                     <span className="mr-2 inline-block h-3 w-3 rounded-full" style={{ background: c.color }} />
+                    <CarLogo logoId={c.logo_id} size={20} className="mr-2 inline-block align-middle" />
                     {c.driver_name || c.name}
                   </td>
                   <td className="num p-2 text-right">{c.laps}</td>
