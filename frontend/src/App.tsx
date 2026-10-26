@@ -22,6 +22,7 @@ const Garage = lazy(() => import('./pages/Garage').then((m) => ({ default: m.Gar
 const TvMode = lazy(() => import('./pages/TvMode').then((m) => ({ default: m.TvMode })))
 const EventPage = lazy(() => import('./pages/EventPage').then((m) => ({ default: m.EventPage })))
 const TrackEditor = lazy(() => import('./pages/TrackEditor').then((m) => ({ default: m.TrackEditor })))
+const CameraPage = lazy(() => import('./pages/CameraPage').then((m) => ({ default: m.CameraPage })))
 
 export default function App() {
   const route = useRoute()
@@ -90,6 +91,7 @@ export default function App() {
           {route.name === 'garage' && <Garage />}
           {route.name === 'tv' && <TvMode />}
           {route.name === 'track' && <TrackEditor layout={route.layout} />}
+          {route.name === 'camera' && <CameraPage />}
         </Suspense>
       </main>
       <Toasts />
