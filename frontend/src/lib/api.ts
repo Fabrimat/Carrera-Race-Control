@@ -19,6 +19,10 @@ import type {
   ImportReport,
   Logo,
   TrackRecordInfo,
+  CarConfig,
+  ControllerStatus,
+  GarageCar,
+  PairingState,
 } from './types'
 
 /**
@@ -147,4 +151,12 @@ export const api = {
     name: string
     language: 'en' | 'it'
   }) => request<LayoutDraft>('POST', '/api/layouts/from-photo', body),
+  // ---- controller settings, pairing, garage (docs/PROTOCOL.md "Roadmap wave 2")
+  controllers: () => request<{ controllers: ControllerStatus[] }>('GET', '/api/controllers'),
+  applyControllers: () => request<{ controllers: ControllerStatus[] }>('POST', '/api/controllers/apply'),
+  startPairing: (body: { target_address: number; car: CarConfig; from_address: number | null }) =>
+    request<PairingState>('POST', '/api/pairing', body),
+  confirmPairing: () => request<PairingState>('POST', '/api/pairing/confirm'),
+  cancelPairing: () => request<PairingState>('DELETE', '/api/pairing'),
+  garage: () => request<{ cars: GarageCar[] }>('GET', '/api/garage'),
 }
