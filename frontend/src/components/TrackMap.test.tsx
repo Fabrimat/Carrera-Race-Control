@@ -49,7 +49,7 @@ function frame(at: number) {
 
 describe('TrackMap', () => {
   beforeEach(() => {
-    useStore.setState({ language: 'en' })
+    useStore.setState({ language: 'en', camera: {} })
     nowMs = 0
     rafCb = null
     vi.spyOn(performance, 'now').mockImplementation(() => nowMs)
@@ -160,6 +160,45 @@ describe('TrackMap', () => {
     expect(dots[0]).toHaveAttribute('visibility', 'hidden')
     expect(dots[1]).toHaveAttribute('data-stale', 'true')
     expect(dots[1]).toHaveTextContent('?')
+  })
+
+  it('uses a fresh webcam position instead of the estimate and draws it as measured', async () => {
+    vi.spyOn(api, 'findLayout').mockResolvedValue(layout)
+    useStore.setState({
+      race: raceState({ layout: 'Default', cars: [car({ address: 0, position: 1, track_pos: pos() })] }),
+      camera: { 0: { s: 0.5, seen_at: 0, off_path: false } },
+    })
+    render(<TrackMap />)
+    await screen.findByTestId('track-map')
+    frame(0)
+    const dot = screen.getByTestId('car-dot')
+    expect(dot).toHaveAttribute('data-measured', 'true')
+    expect(screen.getByTestId('camera-ring')).toHaveAttribute('visibility', 'visible')
+    // s = 0.5 on the unit square is the corner (1, 1); the estimate would be s = 0.
+    const at = () => /translate\(([-\d.e]+) ([-\d.e]+)\)/.exec(dot.getAttribute('transform') ?? '')
+    expect(Number(at()?.[1])).toBeCloseTo(1, 5)
+    expect(Number(at()?.[2])).toBeCloseTo(1, 5)
+    // 500 ms later the measurement is stale: back to the estimate, normal dot.
+    for (let t = 500; t < 4000; t += 20) frame(t)
+    expect(dot).toHaveAttribute('data-measured', 'false')
+    expect(screen.getByTestId('camera-ring')).toHaveAttribute('visibility', 'hidden')
+    expect(Number(at()?.[2])).toBeCloseTo(0, 1) // the paused estimate stays at s = 0 (top edge)
+  })
+
+  it('shows a car the webcam sees even without an estimated position', async () => {
+    vi.spyOn(api, 'findLayout').mockResolvedValue(layout)
+    useStore.setState({
+      race: raceState({ layout: 'Default', cars: [car({ address: 2, position: 1 })] }),
+      camera: { 2: { s: 0.25, seen_at: 100, off_path: false } },
+    })
+    render(<TrackMap />)
+    await screen.findByTestId('track-map')
+    frame(200)
+    const dot = screen.getByTestId('car-dot')
+    expect(dot).toHaveAttribute('visibility', 'visible')
+    expect(dot).toHaveAttribute('data-measured', 'true')
+    frame(700)
+    expect(dot).toHaveAttribute('visibility', 'hidden')
   })
 
   it('cancels the animation frame on unmount', async () => {

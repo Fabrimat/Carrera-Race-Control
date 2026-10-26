@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useT } from '../i18n/useT'
 import { api } from '../lib/api'
+import { freshCameraS } from '../lib/camera/position'
 import { cumulative, estimateS, pointAt, shortestDelta, tangentAt, toDisplay, type Pt } from '../lib/geometry'
 import { useStore } from '../lib/store'
 import type { RaceState, TrackLayout } from '../lib/types'
@@ -95,6 +96,7 @@ function MapCanvas({ layout }: { layout: TrackLayout }) {
   const raceRef = useRef({ race, receivedAt: 0 })
   const dotEls = useRef(new Map<number, SVGGElement>())
   const ringEls = useRef(new Map<number, SVGCircleElement>())
+  const camEls = useRef(new Map<number, SVGCircleElement>())
 
   // Re-anchor the local race clock whenever a new state message arrives.
   useEffect(() => {
@@ -116,31 +118,37 @@ function MapCanvas({ layout }: { layout: TrackLayout }) {
       last = now
       const { race: r, receivedAt } = raceRef.current
       const raceNow = raceClockNow(r, receivedAt, now)
+      // Webcam tracking (lib/camera): a fresh measured position replaces the estimate.
+      const camera = useStore.getState().camera
       for (const c of r.cars) {
         const el = dotEls.current.get(c.address)
         if (!el) continue
         const pos = c.track_pos
+        const measured = freshCameraS(camera[c.address], now)
         // A car with an open incident is shown as a static OFF marker instead of the dot.
-        if (!pos || (c.incident && c.incident.s !== null)) {
+        if ((!pos && measured === null) || (c.incident && c.incident.s !== null)) {
           el.setAttribute('visibility', 'hidden')
           continue
         }
-        const target = estimateS(pos, raceNow, pitS)
+        const target = measured ?? (pos ? estimateS(pos, raceNow, pitS) : 0)
+        const anchor = pos?.anchor_race_ms ?? null
         const crossing = c.last_crossing?.race_time_ms ?? null
         let d = dots.get(c.address)
         const fresh = !d
         if (!d) {
-          d = { s: target, anchor: pos.anchor_race_ms, crossing, flashAt: -Infinity }
+          d = { s: target, anchor, crossing, flashAt: -Infinity }
           dots.set(c.address, d)
         }
-        const snap = pos.anchor_race_ms !== d.anchor
+        const snap = anchor !== d.anchor
         if (crossing !== d.crossing && !fresh) d.flashAt = now
-        d.anchor = pos.anchor_race_ms
+        d.anchor = anchor
         d.crossing = crossing
         d.s = stepDot(d.s, target, dt, snap)
         const [x, y] = pointAt(scaled, d.s, cum)
         el.setAttribute('transform', `translate(${x} ${y})`)
         el.setAttribute('visibility', 'visible')
+        el.setAttribute('data-measured', measured !== null ? 'true' : 'false')
+        camEls.current.get(c.address)?.setAttribute('visibility', measured !== null ? 'visible' : 'hidden')
         const ring = ringEls.current.get(c.address)
         if (ring) {
           const k = (now - d.flashAt) / FLASH_MS
@@ -250,6 +258,19 @@ function MapCanvas({ layout }: { layout: TrackLayout }) {
               stroke={c.color}
               strokeWidth={0.01}
               opacity={0}
+            />
+            {/* solid ring: position measured by the webcam (lib/camera) */}
+            <circle
+              ref={(el) => {
+                if (el) camEls.current.set(c.address, el)
+                else camEls.current.delete(c.address)
+              }}
+              r={0.045}
+              fill="none"
+              stroke="#e8ecef"
+              strokeWidth={0.009}
+              visibility="hidden"
+              data-testid="camera-ring"
             />
             <circle r={0.032} fill={c.color} stroke="#0b0d10" strokeWidth={0.008} />
             <text fontSize={0.04} fontWeight={800} textAnchor="middle" dominantBaseline="central" fill="#fff" stroke="#000" strokeWidth={0.006} paintOrder="stroke">

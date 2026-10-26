@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { detectLanguage, translate, type Params, type TKey } from '../i18n'
+import type { CameraPosition } from './camera/position'
 import type {
   CommentaryLine,
   ConnectionInfo,
@@ -102,6 +103,11 @@ export interface AppState extends LiveState {
   setRace: (r: RaceState) => void
   pushToast: (message: string, kind?: Toast['kind']) => void
   dismissToast: (id: number) => void
+  /** Webcam tracking (lib/camera): measured positions per address, client-only. */
+  camera: Record<number, CameraPosition>
+  /** Merge measured positions (only the given addresses change). */
+  setCameraPositions: (p: Record<number, CameraPosition>) => void
+  clearCamera: () => void
 }
 
 /** Pure reducer for WebSocket messages: returns the changed slice of LiveState. */
@@ -197,6 +203,9 @@ export const useStore = create<AppState>((set, get) => ({
     setTimeout(() => get().dismissToast(id), 6000)
   },
   dismissToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
+  camera: {},
+  setCameraPositions: (p) => set((s) => ({ camera: { ...s.camera, ...p } })),
+  clearCamera: () => set({ camera: {} }),
 }))
 
 /** Translate outside React using the current UI language. */
