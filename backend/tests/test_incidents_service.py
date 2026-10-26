@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -319,6 +320,67 @@ async def test_a_failing_recall_is_logged_not_raised(
         await ctl.clear_incident(0)  # must not raise
         assert not ctl._pace_owned
         assert "recalling failed" in caplog.text
+    finally:
+        await ctl.shutdown()
+
+
+def gate_toggles(track: FakeTrack, gated: set[int]) -> asyncio.Event:
+    """Make the n-th toggle (1-based) wait for the returned event; paces counts completed ones."""
+    gate = asyncio.Event()
+    calls = [0]
+
+    async def toggle() -> None:
+        calls[0] += 1
+        if calls[0] in gated:
+            await gate.wait()
+        track.paces += 1
+
+    track.toggle_pace_car = toggle  # type: ignore[method-assign]
+    return gate
+
+
+async def spin() -> None:
+    for _ in range(5):
+        await asyncio.sleep(0)
+
+
+async def test_incident_cleared_while_the_pace_car_is_being_deployed(tmp_path: Path) -> None:
+    ctl, track, drive = await setup(tmp_path)
+    try:
+        gate = gate_toggles(track, {1})
+        await drive.learn()
+        for t in (18000, 24000):
+            await drive.cross(1, t)
+        drive.at(27001)
+        task = asyncio.create_task(ctl._process_events(ctl.engine.tick()))
+        await spin()
+        assert ctl._pace_owned and track.paces == 0  # the toggle is still in flight
+        await drive.cross(0, 28000)  # car 0 crosses: its incident clears by crossing
+        gate.set()
+        await task
+        # no further tick: the pace car must already be on its way back
+        assert track.paces == 2
+        assert ctl.engine.phase is RacePhase.RUNNING and not ctl._pace_owned
+    finally:
+        await ctl.shutdown()
+
+
+async def test_incident_opened_while_the_pace_car_is_being_recalled(tmp_path: Path) -> None:
+    ctl, track, drive = await setup(tmp_path)
+    try:
+        gate = gate_toggles(track, {2})
+        await drive.flag_car_0()
+        assert track.paces == 1 and ctl._pace_owned
+        task = asyncio.create_task(ctl.clear_incident(0))  # last incident: recall (gated)
+        await spin()
+        assert not ctl._pace_owned and track.paces == 1
+        await ctl.report_incident(1)  # a new incident while the recall is in flight
+        gate.set()
+        await task
+        assert track.paces == 3  # recalled, then deployed again for car 1
+        assert ctl.engine.phase is RacePhase.PAUSED and ctl._pace_owned
+        await ctl.clear_incident(1)
+        assert track.paces == 4 and ctl.engine.phase is RacePhase.RUNNING
     finally:
         await ctl.shutdown()
 
