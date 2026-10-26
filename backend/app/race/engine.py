@@ -69,6 +69,7 @@ Design notes
 
 from __future__ import annotations
 
+import math
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -92,6 +93,7 @@ from app.race.models import (
     LowFuel,
     PitEntry,
     PitExit,
+    PitMissed,
     PositionChange,
     RaceConfig,
     RaceEvent,
@@ -163,6 +165,9 @@ class _Car:
     fuel_laps: list[int | None] = field(default_factory=list)  # level at the end of each lap
     fuel_strategy: FuelStrategy | None = None
     lap_pit: bool = False  # the lap in progress included a pit stop
+    stint_start_laps: int = 0  # laps counted when the current stint began (race start / pit exit)
+    stint_start_fuel: int | None = None  # fuel level at that moment (None = not known yet)
+    fuel_rate: float | None = None  # last per-lap rate measured over a stint
 
     @property
     def crossed(self) -> bool:
@@ -660,11 +665,15 @@ class RaceEngine:
                 car.pit_entered_ms = changed_ms
                 car.seg_pit = True
                 car.pit_stops += 1
+                car.lap_pit = True
                 if emit:
                     events.append(PitEntry(address=address, race_time_ms=self._race_ms))
             else:
                 car.in_pit = False
                 car.watch_from_ms = self._race_ms  # incident watch restarts at the pit exit
+                # A new stint starts at the pit exit, from the refuelled level (if known).
+                car.stint_start_laps = car.laps
+                car.stint_start_fuel = car.fuel if self._fuel_mode else None
                 if emit:
                     events.append(
                         PitExit(
@@ -826,6 +835,7 @@ class RaceEngine:
             )
 
         events.extend(self._update_finishing(car, race_t))
+        self._update_fuel_strategy()
         return events
 
     # ---- sectors
@@ -1186,11 +1196,92 @@ class RaceEngine:
     # ---- fuel strategy / pit rules (brief F)
 
     def _apply_pit_penalties(self) -> list[RaceEvent]:
-        """Brief F: mandatory pit stop penalties (PitMissed) before the final order."""
-        return []
+        """Brief F: mandatory pit stop penalties (PitMissed) before the final order.
+
+        Only in LAPS and TIMED mode, on any race end (finish or Stop). A drive-through counts
+        as a stop (``pit_stops`` is incremented on every pit entry).
+        """
+        pits = self.config.pits
+        if pits.min_stops <= 0 or self.config.mode is RaceMode.PRACTICE:
+            return []
+        events: list[RaceEvent] = []
+        for car in sorted(self._cars.values(), key=lambda c: c.address):
+            if not car.crossed or car.pit_stops >= pits.min_stops:
+                continue
+            missing = pits.min_stops - car.pit_stops
+            penalty = missing * pits.missed_penalty_s * 1000
+            car.penalty_ms += penalty
+            events.append(
+                PitMissed(
+                    address=car.address,
+                    stops=car.pit_stops,
+                    required=pits.min_stops,
+                    penalty_ms=penalty,
+                    race_time_ms=self._race_ms,
+                )
+            )
+        return events
 
     def _record_fuel_lap(self, car: _Car) -> None:
         """Brief F: append the fuel level at the end of the lap just counted."""
+        car.fuel_laps.append(car.fuel if self._fuel_mode else None)
+        car.lap_pit = False
 
     def _update_fuel_strategy(self) -> None:
-        """Brief F: refresh every car's FuelStrategy after a Status frame."""
+        """Brief F: refresh every car's FuelStrategy (see PROTOCOL "Fuel strategy")."""
+        if not self._fuel_mode:
+            for car in self._cars.values():
+                car.fuel_strategy = None
+                car.stint_start_fuel = None
+                car.fuel_rate = None
+            return
+        phase = self._phase
+        if phase not in (RacePhase.RUNNING, RacePhase.PAUSED, RacePhase.FINISHED):
+            return
+        mode = self.config.mode
+        finishing = self._finishing or phase is RacePhase.FINISHED
+        leader_laps = 0
+        standings = self._standings()
+        if standings:
+            leader_laps = standings[0].laps
+        for car in self._cars.values():
+            if not car.crossed or car.fuel is None:
+                car.fuel_strategy = None
+                continue
+            if car.stint_start_fuel is None and not car.in_pit:
+                car.stint_start_fuel = car.fuel
+                car.stint_start_laps = car.laps
+            stint_laps = car.laps - car.stint_start_laps
+            if not car.in_pit and car.stint_start_fuel is not None and stint_laps >= 2:
+                drop = car.stint_start_fuel - car.fuel
+                if drop >= 1:
+                    car.fuel_rate = drop / stint_laps
+            per_lap = car.fuel_rate
+            laps_left = car.fuel / per_lap if per_lap else None
+            laps_to_go: int | None
+            if mode is RaceMode.PRACTICE:
+                laps_to_go = None
+            elif finishing or car.finished:
+                laps_to_go = 0
+            elif mode is RaceMode.LAPS:
+                laps_to_go = max(0, self.config.target_laps - leader_laps)
+            else:
+                avg = car.valid_sum / car.valid_count if car.valid_count else None
+                if avg:
+                    remaining = max(0, self.config.duration_s * 1000 - self._race_ms)
+                    laps_to_go = math.ceil(remaining / avg)
+                else:
+                    laps_to_go = None
+            must_pit = (
+                not car.in_pit
+                and laps_to_go is not None
+                and laps_left is not None
+                and laps_left < laps_to_go
+            )
+            car.fuel_strategy = FuelStrategy(
+                per_lap=per_lap,
+                laps_left=laps_left,
+                laps_to_go=laps_to_go,
+                must_pit=must_pit,
+                pit_by_lap=car.laps + math.floor(laps_left or 0) if must_pit else None,
+            )

@@ -158,6 +158,16 @@ TEMPLATES: dict[str, list[str]] = {
         "{name} rejoins the race.",
         "Green light, {name} is back in action!",
     ],
+    "pit_missed": [
+        "{name} skipped the mandatory pit stop, a {penalty} penalty!",
+        "No stop for {name}, that costs {penalty}!",
+        "{name} did not make the required stops, {penalty} added.",
+    ],
+    "fuel_strategy": [
+        "{name} will have to pit by lap {lap}, the fuel will not last.",
+        "Strategy call for {name}: a stop is needed by lap {lap}.",
+        "{name} cannot make it to the end without refuelling, box by lap {lap}.",
+    ],
 }
 
 STATIC_FIELDS = frozenset(

@@ -39,7 +39,7 @@ from app.race.models import (
 TOP_N = 3
 RECENT_EVENTS = 5
 RECENT_LINES = 4
-_FUEL_EVENTS = frozenset({"low_fuel", "pit_entry", "pit_exit"})
+_FUEL_EVENTS = frozenset({"low_fuel", "pit_entry", "pit_exit", "fuel_strategy", "pit_missed"})
 
 
 def _name(address: int, cars: dict[int, CarConfig]) -> str:
@@ -274,6 +274,15 @@ def build_context(
                 car_info["fuel_state"] = fuel
             car_info["pit_stops"] = involved.pit_stops
             car_info["in_pit"] = involved.in_pit
+            strategy = involved.fuel_strategy
+            if strategy is not None:
+                if strategy.laps_left is not None:
+                    car_info["laps_left"] = round(strategy.laps_left, 1)
+                car_info["must_pit"] = strategy.must_pit
+                if strategy.pit_by_lap is not None:
+                    car_info["pit_by_lap"] = strategy.pit_by_lap
+            if cfg.pits.min_stops > 0:
+                car_info["required_stops"] = cfg.pits.min_stops
         if state.num_sectors > 1:
             current = _spoken_sectors(involved.current_sectors, lang)
             last = _spoken_sectors(involved.last_sectors, lang)

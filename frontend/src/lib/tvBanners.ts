@@ -10,6 +10,7 @@ const DURATION: Record<BannerKind, number> = {
   pit_in: 3000,
   pit_out: 3000,
   low_fuel: 3600,
+  pit_missed: 5200,
   control: 4200,
   final_lap: 4800,
   chequered: Infinity,
@@ -83,6 +84,11 @@ export function bannerForEvent(e: RaceEvent, c: BannerContext): Banner | null {
       return make('pit_out', id, c.t('tv.banner.pit_out', { code: code(e.address) }), { color: car(e.address)?.color })
     case 'low_fuel':
       return make('low_fuel', id, c.t('tv.banner.low_fuel', { code: code(e.address) }), { color: car(e.address)?.color })
+    case 'pit_missed':
+      return make('pit_missed', id, c.t('tv.banner.pit_missed', { code: code(e.address) }), {
+        subtitle: e.penalty_ms > 0 ? c.t('tv.banner.pit_missed_sub', { seconds: Math.round(e.penalty_ms / 1000) }) : undefined,
+        color: car(e.address)?.color,
+      })
     case 'false_start': {
       if (e.action === 'ignore') return null
       const who = e.address === null ? null : name(e.address)
